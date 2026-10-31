@@ -352,8 +352,22 @@
         return state.clientStatuses[userId];
       }
 
+      // Check PresenceStore directly
+      const PresenceStore =
+        (metro?.findByStoreName && metro.findByStoreName("PresenceStore")) ||
+        (metro?.findByProps && metro.findByProps("getState"));
+
+      if (PresenceStore?.getClientStatuses) {
+        const cs = PresenceStore.getClientStatuses(userId);
+        if (cs && typeof cs === "object" && Object.keys(cs).length > 0) return cs;
+      }
+
+      if (PresenceStore?.getState) {
+        const liveState = PresenceStore.getState();
+        if (liveState?.clientStatuses?.[userId]) return liveState.clientStatuses[userId];
+      }
+
       // Fallback: check status directly from presence store
-      const PresenceStore = (metro?.findByStoreName && metro.findByStoreName("PresenceStore")) || (metro?.findByProps && metro.findByProps("getState"));
       if (PresenceStore?.getStatus) {
         const st = PresenceStore.getStatus(userId);
         if (st && st !== "offline") {
@@ -384,15 +398,20 @@
               presenceCache = null;
               setTick((t) => t + 1);
             }
+          } else if (e.user?.id === userId || e.userId === userId) {
+            presenceCache = null;
+            setTick((t) => t + 1);
           } else {
             presenceCache = null;
             setTick((t) => t + 1);
           }
         };
         FluxDispatcher.subscribe("PRESENCE_UPDATES", onPresence);
+        FluxDispatcher.subscribe("PRESENCE_UPDATE", onPresence);
         return () => {
           try {
             FluxDispatcher.unsubscribe("PRESENCE_UPDATES", onPresence);
+            FluxDispatcher.unsubscribe("PRESENCE_UPDATE", onPresence);
           } catch (_) {}
         };
       }
@@ -1423,6 +1442,21 @@
                   unpatches.push(after(key, owner, afterFn));
                 }
                 console.log(`[QoL-AIO] PlatformIndicators hooked ${importedPath || "module"} on ${key}`);
+              } else if (typeof ns === "object" && ns !== null) {
+                for (const k of Object.keys(ns)) {
+                  const exportItem = ns[k];
+                  if (exportItem && typeof exportItem === "object" && typeof exportItem.type === "function") {
+                    patched = true;
+                    if (beforeFn && before) unpatches.push(before("type", exportItem, beforeFn));
+                    if (afterFn && after) unpatches.push(after("type", exportItem, afterFn));
+                    console.log(`[QoL-AIO] PlatformIndicators hooked ${importedPath || "module"} member ${k} on type`);
+                  } else if (typeof exportItem === "function" && k !== "default") {
+                    patched = true;
+                    if (beforeFn && before) unpatches.push(before(k, ns, beforeFn));
+                    if (afterFn && after) unpatches.push(after(k, ns, afterFn));
+                    console.log(`[QoL-AIO] PlatformIndicators hooked ${importedPath || "module"} member ${k}`);
+                  }
+                }
               }
             }
 
@@ -1642,6 +1676,209 @@
               })
             );
           }
+
+          // H. Hook DM List Channels (Tabs v2 / messages tab 1-on-1 direct messages)
+          function patchDMChannelRow(args, res) {
+            if (!storage.platformIndicators || !res) return res;
+
+            try {
+              const arg0 = args?.[0];
+              const channel = arg0?.channel || arg0;
+
+              // Only show for 1-on-1 direct messages
+              const isDM =
+                channel?.type === 1 ||
+                (typeof channel?.isDM === "function" && channel.isDM()) ||
+                (Array.isArray(channel?.recipients) && channel.recipients.length === 1);
+
+              if (channel && channel.type !== undefined && !isDM) return res;
+
+              let userId =
+                (Array.isArray(channel?.recipients) && channel.recipients[0]) ||
+                (typeof channel?.getRecipientId === "function" && channel.getRecipientId()) ||
+                (Array.isArray(channel?.rawRecipients) && channel.rawRecipients[0]?.id) ||
+                channel?.recipientId;
+
+              if (!userId) {
+                const userNode = findInReactTree(res, (m) => m?.props?.user?.id || m?.props?.userId);
+                userId = userNode?.props?.user?.id || userNode?.props?.userId;
+              }
+
+              if (!userId) return res;
+              if (findInReactTree(res, (m) => m?.key === "QoLPlatformIconsDM")) return res;
+
+              // Locate name container inside channel list item
+              const nameContainer = findInReactTree(
+                res,
+                (m) =>
+                  m?.props?.children &&
+                  (Array.isArray(m.props.children)
+                    ? m.props.children.some(
+                        (h) =>
+                          h?.props?.ellipsizeMode ||
+                          (typeof h?.props?.variant === "string" &&
+                            (h.props.variant.includes("channel-title") || h.props.variant.includes("semibold")))
+                      )
+                    : m.props.children?.props?.ellipsizeMode ||
+                      (typeof m.props.children?.props?.variant === "string" &&
+                        (m.props.children.props.variant.includes("channel-title") ||
+                          m.props.children.props.variant.includes("semibold"))))
+              );
+
+              if (nameContainer && Array.isArray(nameContainer.props.children)) {
+                const idx = nameContainer.props.children.findIndex(
+                  (h) =>
+                    h?.props?.ellipsizeMode ||
+                    (typeof h?.props?.variant === "string" &&
+                      (h.props.variant.includes("channel-title") || h.props.variant.includes("semibold")))
+                );
+                const insertIdx = idx !== -1 ? idx + 1 : nameContainer.props.children.length;
+                nameContainer.props.children.splice(
+                  insertIdx,
+                  0,
+                  React.createElement(
+                    RN.View,
+                    {
+                      key: "QoLPlatformIconsDM",
+                      style: { flexDirection: "row", alignItems: "center", marginLeft: 4 },
+                    },
+                    React.createElement(PresenceUpdatedContainer, { userId: userId, size: 14 })
+                  )
+                );
+              } else if (nameContainer && nameContainer.props && nameContainer.props.children) {
+                const orig = nameContainer.props.children;
+                nameContainer.props.children = React.createElement(
+                  RN.View,
+                  {
+                    key: "QoLPlatformIconsDM",
+                    style: { flexDirection: "row", alignItems: "center" },
+                  },
+                  orig,
+                  React.createElement(PresenceUpdatedContainer, { userId: userId, size: 14 })
+                );
+              } else {
+                // Secondary fallback: find the text node itself
+                const textNode = findInReactTree(
+                  res,
+                  (m) =>
+                    m?.props?.ellipsizeMode ||
+                    (typeof m?.props?.variant === "string" &&
+                      (m.props.variant.includes("channel-title") || m.props.variant.includes("semibold")))
+                );
+                if (textNode && textNode.props) {
+                  if (Array.isArray(textNode.props.children)) {
+                    textNode.props.children.push(
+                      React.createElement(PresenceUpdatedContainer, {
+                        key: "QoLPlatformIconsDM",
+                        userId: userId,
+                        size: 14,
+                      })
+                    );
+                  } else if (textNode.props.children) {
+                    textNode.props.children = [
+                      textNode.props.children,
+                      React.createElement(
+                        RN.View,
+                        {
+                          key: "QoLPlatformIconsDM",
+                          style: { flexDirection: "row", alignItems: "center", marginLeft: 4 },
+                        },
+                        React.createElement(PresenceUpdatedContainer, { userId: userId, size: 14 })
+                      ),
+                    ];
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn("[QoL-AIO] Error in patchDMChannelRow:", err);
+            }
+            return res;
+          }
+
+          // 1. Hook MessagesItemChannelContent
+          hookModule(
+            "modules/main_tabs_v2/native/tabs/messages/items/channel/MessagesItemChannelContent.tsx",
+            () =>
+              (metro?.findByTypeName && metro.findByTypeName("MessagesItemChannelContent")) ||
+              (metro?.find &&
+                metro.find(
+                  (m) =>
+                    m?.default?.name === "MessagesItemChannelContent" ||
+                    m?.name === "MessagesItemChannelContent" ||
+                    m?.type?.name === "MessagesItemChannelContent"
+                )),
+            null,
+            patchDMChannelRow
+          );
+
+          // 2. Hook MessagesItemChannel components (Fast, Flash, Legend)
+          hookModule(
+            "modules/main_tabs_v2/native/tabs/messages/items/MessagesItemChannel.tsx",
+            () =>
+              findByProps("MessagesItemChannelFast", "MessagesItemChannelFlash") ||
+              findByProps("MessagesItemChannelLegend"),
+            null,
+            patchDMChannelRow
+          );
+
+          // 3. Fallback: Hook Pressable for Tabs v2 DM list rows
+          try {
+            const PressableModule =
+              (metro?.findByDisplayName && metro.findByDisplayName("Pressable", false)) || findByProps("Pressable");
+            const PressableTarget =
+              PressableModule?.default?.type || PressableModule?.default || PressableModule?.Pressable;
+            if (PressableTarget && before) {
+              const hookTarget =
+                typeof PressableTarget.render === "function"
+                  ? PressableTarget
+                  : typeof PressableTarget === "function"
+                  ? PressableModule
+                  : null;
+              const hookKey = typeof PressableTarget.render === "function" ? "render" : "default";
+              if (hookTarget) {
+                unpatches.push(
+                  before(hookKey, hookTarget, (args) => {
+                    if (!storage.platformIndicators || !args || !args[0]) return;
+                    const props = args[0];
+                    if (props?.accessibilityRole !== "button") return;
+
+                    try {
+                      const root = props?.children?.props?.children;
+                      if (!root) return;
+
+                      const child0Type = root?.props?.children?.[0]?.type?.type?.name;
+                      const isChannelRow =
+                        child0Type === "GuildContainerIndicator" ||
+                        child0Type === "ChannelUnreadBadge" ||
+                        !root?.props?.children?.[1]?.props?.children?.[0]?.props?.children?.props?.guildId;
+
+                      const userId =
+                        root?.props?.children?.[1]?.props?.children?.[0]?.props?.children?.props?.user?.id ||
+                        findInReactTree(props, (m) => m?.props?.user?.id)?.props?.user?.id;
+
+                      if (!userId || !isChannelRow) return;
+
+                      const nameArea = root?.props?.children?.[2]?.props?.children?.[0];
+                      if (nameArea && nameArea.props && Array.isArray(nameArea.props.children)) {
+                        const firstChild = nameArea.props.children[0];
+                        if (firstChild && firstChild.props && Array.isArray(firstChild.props.children)) {
+                          if (!findInReactTree(firstChild.props.children, (c) => c?.key === "QoLPlatformIconsDM")) {
+                            firstChild.props.children.push(
+                              React.createElement(PresenceUpdatedContainer, {
+                                key: "QoLPlatformIconsDM",
+                                userId: userId,
+                                size: 14,
+                              })
+                            );
+                          }
+                        }
+                      }
+                    } catch (_) {}
+                  })
+                );
+              }
+            }
+          } catch (_) {}
 
           console.log("[QoL-AIO] PlatformIndicators hooks active.");
         } catch (e) {
