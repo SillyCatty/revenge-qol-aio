@@ -7,6 +7,13 @@ const code = `(function (v) {
 
   const vendetta = v || window.vendetta || window.revenge || window.bunny;
   let unpatches = [];
+      if (moreAltsInstance && typeof moreAltsInstance.onUnload === "function") {
+        try {
+          moreAltsInstance.onUnload();
+        } catch (_) {}
+        moreAltsInstance = null;
+      }
+
 
   // Default Settings State
   const defaultSettings = {
@@ -34,7 +41,22 @@ const code = `(function (v) {
     platformIndicators: true,
     openExternalBrowser: true,
     storeButtons: true,
+    moreAlts: true,
   };
+
+  let moreAltsInstance = null;
+
+  function loadMoreAlts(v) {
+    const vendetta = v || window.vendetta || window.revenge || window.bunny;
+    if (!vendetta) return null;
+    try {
+      const moreAltsModule = /* MORE_ALTS_BUNDLE_INJECTION */;
+      return moreAltsModule?.default || moreAltsModule;
+    } catch (e) {
+      console.warn("[QoL-AIO] Error initializing MoreAlts:", e);
+      return null;
+    }
+  }
 
   function getStorage() {
     return (vendetta && vendetta.plugin && vendetta.plugin.storage) || defaultSettings;
@@ -978,7 +1000,7 @@ const code = `(function (v) {
       { key: "useSystemEmoji", label: "Use System Emoji (nexpid)", desc: "Replaces Twemoji with native Android system emojis in messages" },
       { key: "freeStickers", label: "Free Stickers (aliernfrog & Cristiandis)", desc: "Send stickers from any server without Nitro (embeds direct sticker media)" },
       { key: "silentTyping", label: "Silent / Incognito Typing", desc: "Never broadcast 'typing...' indicator in any DM or server" },
-      { key: "messageLogger", label: "Message Logger", desc: "Keep deleted messages (*deleted*) and show previous text on edits (*old text*)" },
+      { key: "messageLogger", label: "Message Logger", desc: "Keep deleted messages (*deleted*) and stack all edit versions chronologically" },
       { key: "cleanUrls", label: "Clean URLs (Tracker Stripper)", desc: "Remove tracking params (utm, si, igshid, fbclid) when sending links" },
       { key: "exactTimestamps", label: "Exact Timestamps", desc: "Show hours, minutes, and seconds on chat messages" },
 
@@ -991,6 +1013,7 @@ const code = `(function (v) {
       // Interface & Navigation
       { key: "platformIndicators", label: "Platform Indicators (MSMA)", desc: "Show Desktop, Mobile, and Web presence badges next to usernames" },
       { key: "openExternalBrowser", label: "Open in External Browser", desc: "Bypass in-app webview for all clicked links" },
+      { key: "moreAlts", label: "More Alts! (ApexTeam / Win8.1VMUser)", desc: "Unlimited account switcher: add alts, switch accounts, or manage tokens via /accswitcher" },
     ];
 
     return React.createElement(
@@ -2186,7 +2209,7 @@ const code = `(function (v) {
                   }
                 }
 
-                // EDITED MESSAGES
+                // EDITED MESSAGES (STACK ALL VERSIONS CHRONOLOGICALLY)
                 if (event.type === "MESSAGE_UPDATE" && event.message && event.message.content) {
                   try {
                     const channelId = event.message.channel_id || event.message.channelId;
@@ -2194,8 +2217,31 @@ const code = `(function (v) {
                     const existing = channel?.get ? channel.get(event.message.id) : channel?._array?.find((m) => m.id === event.message.id);
 
                     if (existing && existing.content && existing.content !== event.message.content && !event.message.__qol_edit_applied) {
-                      const originalContent = existing.content.startsWith("*(deleted)* ") ? existing.content.slice(12) : existing.content;
-                      event.message.content = \`*\${originalContent}*\\n\${event.message.content}\`;
+                      let history = existing.__qol_edits;
+                      if (!Array.isArray(history)) {
+                        const base = existing.content.startsWith("*(deleted)* ") ? existing.content.slice(12) : existing.content;
+                        history = [base];
+                      }
+
+                      const newVersion = event.message.content;
+                      if (!history.includes(newVersion)) {
+                        history.push(newVersion);
+                      }
+                      existing.__qol_edits = history;
+
+                      // Stack all edit versions with previous versions struck through
+                      const stacked = history
+                        .map((ver, idx) => {
+                          if (idx === history.length - 1) return ver;
+                          return ver
+                            .split("\\n")
+                            .map((line) => (line.startsWith("~~") && line.endsWith("~~") ? line : \`~~\${line}~~\`))
+                            .join("\\n");
+                        })
+                        .join("\\n");
+
+                      event.message.content = stacked;
+                      event.message.__qol_edits = history;
                       event.message.__qol_edit_applied = true;
                     }
                   } catch (_) {}
@@ -2267,6 +2313,21 @@ const code = `(function (v) {
         } catch (e) {
           console.warn("[QoL-AIO] Error patching Message Logger:", e);
         }
+        // =========================================================================
+        // 16. MORE ALTS (BY APEXTEAM / WIN8.1VMUSER)
+        // =========================================================================
+        try {
+          if (storage.moreAlts !== false) {
+            moreAltsInstance = loadMoreAlts(vendetta);
+            if (moreAltsInstance && typeof moreAltsInstance.onLoad === "function") {
+              moreAltsInstance.onLoad();
+              console.log("[QoL-AIO] MoreAlts loaded successfully.");
+            }
+          }
+        } catch (e) {
+          console.warn("[QoL-AIO] Error loading MoreAlts:", e);
+        }
+
 
         console.log("[QoL-AIO] All hooks loaded.");
       } catch (err) {
@@ -2307,8 +2368,12 @@ const targetDir = path.resolve("C:/Users/Milky/.gemini/antigravity/scratch/reven
 const indexPath = path.join(targetDir, "index.js");
 const manifestPath = path.join(targetDir, "manifest.json");
 
+const moreAltsPath = path.join(targetDir, "moreAlts.bundle.js");
+const moreAltsBundle = fs.readFileSync(moreAltsPath, "utf8");
+const finalCode = code.replace("/* MORE_ALTS_BUNDLE_INJECTION */", () => moreAltsBundle);
+
 // Write index.js
-fs.writeFileSync(indexPath, code, "utf8");
+fs.writeFileSync(indexPath, finalCode, "utf8");
 
 // Compute SHA-256
 const sha256 = crypto.createHash("sha256").update(fs.readFileSync(indexPath)).digest("hex");
@@ -2316,16 +2381,16 @@ const sha256 = crypto.createHash("sha256").update(fs.readFileSync(indexPath)).di
 // Update manifest.json
 const manifest = {
   name: "QoL-AIO",
-  description: "All-in-One Quality of Life: Built-in Plugin Store (166 plugins with ratings) & Theme Store (193 themes), System Emoji, No Compression, FileSizeOnPicker, NoBandwidthKick, FreeStickers, AltMediaPicker, Bluetooth Audio Fix, PlatformIndicators, Avatar/Banner Downloader, Message Logger, and more.",
+  description: "All-in-One Quality of Life: Built-in Plugin Store (166 plugins with ratings) & Theme Store (193 themes), More Alts! account switcher, System Emoji, No Compression, FileSizeOnPicker, NoBandwidthKick, FreeStickers, AltMediaPicker, Bluetooth Audio Fix, PlatformIndicators, Avatar/Banner Downloader, Message Logger, and more.",
   authors: [
     {
       name: "Milky"
     }
   ],
   main: "index.js",
-  version: "1.4.5",
+  version: "1.5.0",
   hash: sha256
 };
 
 fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
-console.log("Built v1.4.5 successfully with hash:", sha256);
+console.log("Built v1.5.0 successfully with hash:", sha256);
