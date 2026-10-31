@@ -63,15 +63,30 @@
     }
   }
 
-  // Extract highest-resolution banner URL
-  function getUserBannerUrl(user, bannerSource) {
-    if (bannerSource && bannerSource.uri && typeof bannerSource.uri === "string") {
-      return bannerSource.uri.replace(/(?:\?size=\d{3,4})?$/, "?size=4096").replace(".webp", ".png");
+  // Extract highest-resolution banner URL across various Discord prop structures
+  function extractBannerUrl(args) {
+    if (!args) return null;
+    const first = Array.isArray(args) ? args[0] : args;
+    if (!first) return null;
+
+    // 1. Direct bannerSource URI
+    if (first.bannerSource && typeof first.bannerSource.uri === "string") {
+      return first.bannerSource.uri.replace(/(?:\?size=\d{3,4})?$/, "?size=4096").replace(".webp", ".png");
     }
+
+    // 2. User object with banner hash
+    const user = first.user;
     if (user && user.banner) {
       const ext = user.banner.startsWith("a_") ? "gif" : "png";
       return `https://cdn.discordapp.com/banners/${user.id}/${user.banner}.${ext}?size=4096`;
     }
+
+    // 3. Guild-specific member banner
+    if (first.guildMember && first.guildMember.banner && first.guildId && user) {
+      const ext = first.guildMember.banner.startsWith("a_") ? "gif" : "png";
+      return `https://cdn.discordapp.com/guilds/${first.guildId}/users/${user.id}/banners/${first.guildMember.banner}.${ext}?size=4096`;
+    }
+
     return null;
   }
 
@@ -165,11 +180,9 @@
   }
 
   const plugin = {
-    // Both Revenge native lifecycle (start/stop) and Vendetta compatibility (onLoad/onUnload)
     start: () => plugin.onLoad(),
     stop: () => plugin.onUnload(),
 
-    // Both Revenge native naming (SettingsComponent) and Vendetta naming (settings)
     settings: SettingsScreen,
     SettingsComponent: SettingsScreen,
 
@@ -181,7 +194,7 @@
         }
 
         const { metro, patcher, ui } = vendetta;
-        const { findByProps, findByName, findByStoreName } = metro || {};
+        const { findByProps, findByName } = metro || {};
         const { before, instead, after } = patcher || {};
         const RN = (metro.common && metro.common.ReactNative) || {};
         const React = (metro.common && metro.common.React) || window.React;
@@ -238,10 +251,10 @@
         // =========================================================================
         try {
           const HeaderAvatar = findByName("HeaderAvatar", false);
-          const ProfileBanner = findByName("ProfileBanner", false);
           const GuildIcon = findByName("GuildIcon");
           const { Pressable } = findByProps("Button", "Text", "View") || {};
 
+          // HOLD DOWN USER PFP TO DOWNLOAD
           if (HeaderAvatar && after) {
             unpatches.push(
               after("default", HeaderAvatar, ([args], res) => {
@@ -260,22 +273,45 @@
             );
           }
 
-          if (ProfileBanner && after) {
-            unpatches.push(
-              after("default", ProfileBanner, ([args], res) => {
-                if (!storage.mediaViewing || !res || !args) return res;
-                const bannerUrl = getUserBannerUrl(args.user, args.bannerSource);
+          // HOLD DOWN BANNER TO DOWNLOAD (Wraps in a full-width Pressable)
+          const bannerComponents = [
+            findByName("ProfileBanner", false),
+            findByName("UserBanner", false),
+            findByName("UserProfileBanner", false),
+            findByName("HeaderBanner", false),
+          ].filter(Boolean);
 
-                if (bannerUrl) {
-                  attachLongPress(res, () => {
-                    downloadMedia(bannerUrl, "Banner");
-                  });
-                }
-                return res;
+          bannerComponents.forEach((Comp) => {
+            unpatches.push(
+              after("default", Comp, (args, res) => {
+                if (!storage.mediaViewing || !res) return res;
+                const bannerUrl = extractBannerUrl(args);
+
+                if (!Pressable || !React) return res;
+
+                return React.createElement(
+                  Pressable,
+                  {
+                    onLongPress: () => {
+                      if (bannerUrl) {
+                        downloadMedia(bannerUrl, "Banner");
+                      } else {
+                        if (RN.Vibration && typeof RN.Vibration.vibrate === "function") {
+                          RN.Vibration.vibrate(30);
+                        }
+                        if (ui && ui.toasts && ui.toasts.showToast) {
+                          ui.toasts.showToast("This user does not have a custom banner.");
+                        }
+                      }
+                    },
+                  },
+                  res
+                );
               })
             );
-          }
+          });
 
+          // SERVER ICON DOWNLOAD: Tap server icon in large view to download
           if (GuildIcon && GuildIcon.prototype && after && Pressable && React) {
             unpatches.push(
               after("render", GuildIcon.prototype, function (_, res) {
