@@ -2147,7 +2147,8 @@
           const RowManager = findByName("RowManager");
           const MessageRecordUtils = findByProps("updateMessageRecord", "createMessageRecord");
           const MessageRecord = findByName("MessageRecord", false);
-          const FluxDispatcher = (metro.common && metro.common.FluxDispatcher) || findByProps("dispatch", "subscribe");
+          const UserStore = (metro?.findByStoreName && metro.findByStoreName("UserStore")) || findByProps("getCurrentUser");
+          const FluxDispatcher = (metro?.common && metro.common.FluxDispatcher) || findByProps("dispatch", "subscribe");
 
           if (FluxDispatcher && before) {
             unpatches.push(
@@ -2157,57 +2158,57 @@
                 // DELETED MESSAGES
                 if (event.type === "MESSAGE_DELETE") {
                   if (event.__qol_cleanup) return;
-                  const channel = ChannelMessages?._channelMessages?.[event.channelId] || (ChannelMessages?.get && ChannelMessages.get(event.channelId));
-                  const message = channel?.get ? channel.get(event.id) : channel?._array?.find((m) => m.id === event.id);
-                  if (!message || message.state === "SEND_FAILED" || (message.author && message.author.id === "1")) return;
+                  try {
+                    const channel = ChannelMessages?._channelMessages?.[event.channelId] || (ChannelMessages?.get && ChannelMessages.get(event.channelId));
+                    const message = channel?.get ? channel.get(event.id) : channel?._array?.find((m) => m.id === event.id);
+                    if (!message || message.state === "SEND_FAILED" || (message.author && message.author.id === "1")) return;
 
-                  event.type = "MESSAGE_UPDATE";
-                  event.__qol_deleted = true;
-                  event.message = {
-                    id: event.id,
-                    channel_id: event.channelId,
-                    content: message.content ? `*(deleted)* ${message.content}` : "*(deleted message)*",
-                    edited_timestamp: "deleted",
-                    state: "SENT",
-                    __qol_deleted: true,
-                  };
-                  message.__qol_deleted = true;
-                  message.content = event.message.content;
+                    // If current user is deleting their own message, allow normal deletion without error
+                    const currentUserId = UserStore?.getCurrentUser?.()?.id;
+                    if (currentUserId && message.author?.id === currentUserId) return;
 
-                  if (channel && channel._array) {
-                    const idx = channel._array.findIndex((m) => m.id === event.id);
-                    if (idx !== -1) {
-                      channel._array[idx].__qol_deleted = true;
-                      channel._array[idx].content = event.message.content;
-                    }
+                    const raw = typeof message.toJS === "function" ? message.toJS() : { ...message };
+                    return [
+                      {
+                        type: "MESSAGE_UPDATE",
+                        message: {
+                          ...raw,
+                          __qol_deleted: true,
+                        },
+                      },
+                    ];
+                  } catch (_) {
+                    return;
                   }
-
-                  event.channel = {
-                    id: event.channelId,
-                    guild_id: event.guildId,
-                  };
-
-                  event.messages = [{
-                    id: event.id,
-                    channel_id: event.channelId,
-                    content: event.message.content,
-                    state: "SENT",
-                    __qol_deleted: true,
-                  }];
                 }
 
                 // EDITED MESSAGES
                 if (event.type === "MESSAGE_UPDATE" && event.message && event.message.content) {
-                  const channelId = event.message.channel_id || event.message.channelId;
-                  const channel = ChannelMessages?._channelMessages?.[channelId] || (ChannelMessages?.get && ChannelMessages.get(channelId));
-                  const existing = channel?.get ? channel.get(event.message.id) : channel?._array?.find((m) => m.id === event.message.id);
+                  try {
+                    const channelId = event.message.channel_id || event.message.channelId;
+                    const channel = ChannelMessages?._channelMessages?.[channelId] || (ChannelMessages?.get && ChannelMessages.get(channelId));
+                    const existing = channel?.get ? channel.get(event.message.id) : channel?._array?.find((m) => m.id === event.message.id);
 
-                  if (existing && existing.content && existing.content !== event.message.content && !event.message.__qol_edit_applied) {
-                    const originalContent = existing.content.replace(/^\*\(deleted\)\*\s*/, "");
-                    event.message.content = `*${originalContent}*\n${event.message.content}`;
-                    event.message.__qol_edit_applied = true;
-                  }
+                    if (existing && existing.content && existing.content !== event.message.content && !event.message.__qol_edit_applied) {
+                      const originalContent = existing.content.startsWith("*(deleted)* ") ? existing.content.slice(12) : existing.content;
+                      event.message.content = `*${originalContent}*\n${event.message.content}`;
+                      event.message.__qol_edit_applied = true;
+                    }
+                  } catch (_) {}
                 }
+              })
+            );
+          }
+
+          if (MessageRecordUtils && MessageRecordUtils.updateMessageRecord && instead) {
+            unpatches.push(
+              instead("updateMessageRecord", MessageRecordUtils, function ([oldRecord, newProps], orig) {
+                try {
+                  if (newProps && newProps.__qol_deleted && MessageRecordUtils.createMessageRecord) {
+                    return MessageRecordUtils.createMessageRecord(newProps, oldRecord ? oldRecord.reactions : undefined);
+                  }
+                } catch (_) {}
+                return orig.apply(this, [oldRecord, newProps]);
               })
             );
           }
@@ -2235,9 +2236,9 @@
           if (RowManager && RowManager.prototype && after) {
             unpatches.push(
               after("generate", RowManager.prototype, ([data], row) => {
-                if (!row || !data || data.rowType !== 1 || !storage.messageLogger) return;
+                if (!row || !data || data.rowType !== 1) return;
 
-                if (data.message && data.message.__qol_deleted) {
+                if (storage.messageLogger && data.message && data.message.__qol_deleted) {
                   row.message.edited = "deleted";
                   row.backgroundHighlight = row.backgroundHighlight || {};
                   row.backgroundHighlight.backgroundColor = RN.processColor ? RN.processColor("#da373c22") : "#da373c22";
