@@ -1,0 +1,12 @@
+{
+  "name": "QoL-AIO",
+  "description": "All-in-One Quality of Life: Silent Typing, Message Logger (deleted & edited), Anti-Accidental Call, External Browser, Full-Res Avatar/Banner Download, Background Audio, Clean URLs, and Exact Timestamps.",
+  "authors": [
+    {
+      "name": "Milky"
+    }
+  ],
+  "main": "index.js",
+  "version": "1.0.0",
+  "hash": "71999bdef815ce5f89ac5c2448c9c94de8d95bcf0d90bb1ad8b0e653ec134ea7"
+}
