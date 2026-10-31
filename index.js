@@ -13,6 +13,7 @@
     backgroundAudio: true,
     messageLogger: true,
     exactTimestamps: true,
+    noCompression: true,
     mediaViewing: true,
   };
 
@@ -53,7 +54,6 @@
         const React = (metro.common && metro.common.React) || window.React;
         const storage = getStorage();
 
-        // Initialize default storage values if unset
         for (const [key, val] of Object.entries(defaultSettings)) {
           if (storage[key] === undefined) storage[key] = val;
         }
@@ -68,15 +68,77 @@
           }
         } catch (_) {}
 
+        // Helper: Download Image to Gallery
+        const MediaManager = findByProps("downloadMediaAsset");
+        function downloadMedia(url, label = "Media") {
+          if (!url) return;
+          try {
+            if (MediaManager && typeof MediaManager.downloadMediaAsset === "function") {
+              MediaManager.downloadMediaAsset(url, 1);
+              if (ui && ui.toasts && ui.toasts.showToast) {
+                ui.toasts.showToast(
+                  `${label} saved to gallery!`,
+                  ui.toasts.getAssetIDByName ? ui.toasts.getAssetIDByName("ic_download_24px") : undefined
+                );
+              }
+              return;
+            }
+          } catch (_) {}
+
+          // Fallback to external browser download
+          const Linking = findByProps("openURL", "canOpenURL") || RN.Linking;
+          if (Linking && Linking.openURL) {
+            Linking.openURL(url);
+          }
+        }
+
         // =========================================================================
-        // 1. SILENT / INCOGNITO TYPING (WITH CONFIG TOGGLE)
+        // 1. NO COMPRESSION (PHOTOS & VIDEOS UPLOAD AT ORIGINAL QUALITY & BITRATE)
+        // =========================================================================
+        try {
+          const CloudUploadModule = findByProps("CloudUpload");
+          const CloudUpload = CloudUploadModule && CloudUploadModule.CloudUpload;
+          if (CloudUpload && CloudUpload.prototype && after) {
+            unpatches.push(
+              after("reactNativeCompressAndExtractData", CloudUpload.prototype, function (args, res) {
+                if (!storage.noCompression) return res;
+                const media = this;
+                return new Promise((resolve) => {
+                  media.reactNativeFilePrepped = true;
+                  if (media.preCompressionSize) {
+                    media.currentSize = media.preCompressionSize;
+                    media.postCompressionSize = media.preCompressionSize;
+                  } else {
+                    media.postCompressionSize = 1000;
+                    media.preCompressionSize = 1000;
+                    media.currentSize = 1000;
+                  }
+
+                  if (media.mimeType === "image/png" && !media.filename.toLowerCase().endsWith(".png")) {
+                    media.filename = media.filename + ".png";
+                  }
+                  if (media.mimeType === "image/jpg" && !(media.filename.toLowerCase().endsWith(".jpg") || media.filename.toLowerCase().endsWith(".jpeg"))) {
+                    media.filename = media.filename + ".jpg";
+                  }
+                  resolve(media);
+                });
+              })
+            );
+            console.log("[QoL-AIO] NoCompression hook active.");
+          }
+        } catch (e) {
+          console.warn("[QoL-AIO] Error patching CloudUpload:", e);
+        }
+
+        // =========================================================================
+        // 2. SILENT / INCOGNITO TYPING (WITH CONFIG TOGGLE)
         // =========================================================================
         try {
           const Typing = findByProps("startTyping");
           if (Typing && instead) {
             unpatches.push(
               instead("startTyping", Typing, (args, orig) => {
-                if (storage.silentTyping) return; // Muted!
+                if (storage.silentTyping) return;
                 return orig.apply(Typing, args);
               })
             );
@@ -93,7 +155,7 @@
         }
 
         // =========================================================================
-        // 2. ANTI-ACCIDENTAL CALLS (CONFIRMATION DIALOG)
+        // 3. ANTI-ACCIDENTAL CALLS (CONFIRMATION DIALOG)
         // =========================================================================
         try {
           const CallActions = findByProps("call", "ring") || findByProps("startCall");
@@ -102,7 +164,6 @@
             unpatches.push(
               instead("call", CallActions, (args, orig) => {
                 if (!storage.antiCall) return orig.apply(CallActions, args);
-
                 const [, isVideo] = args;
                 const showConfirm = alerts.showConfirmationAlert || alerts.show;
                 if (typeof showConfirm === "function") {
@@ -125,7 +186,7 @@
         }
 
         // =========================================================================
-        // 3. OPEN IN EXTERNAL BROWSER DIRECTLY
+        // 4. OPEN IN EXTERNAL BROWSER DIRECTLY
         // =========================================================================
         try {
           const Linking = findByProps("openURL", "canOpenURL") || RN.Linking;
@@ -156,7 +217,7 @@
         }
 
         // =========================================================================
-        // 4. CLEAN URLS (TRACKER STRIPPER) & MESSAGE SEND LATENCY ENHANCEMENT
+        // 5. CLEAN URLS & MESSAGE SEND LATENCY ENHANCEMENT
         // =========================================================================
         try {
           const MessageActions = findByProps("sendMessage", "receiveMessage");
@@ -167,20 +228,16 @@
                 if (msg && msg.content && storage.cleanUrls) {
                   msg.content = stripUrlTrackers(msg.content);
                 }
-                // Strip redundant analytics and delay flags on message dispatch
-                if (msg && msg.flags !== undefined) {
-                  msg.invalidEmojis = [];
-                }
               })
             );
-            console.log("[QoL-AIO] Clean URLs and Send Latency hooks initialized.");
+            console.log("[QoL-AIO] Clean URLs hook initialized.");
           }
         } catch (e) {
           console.warn("[QoL-AIO] Error patching MessageActions:", e);
         }
 
         // =========================================================================
-        // 5. BACKGROUND AUDIO (VOICE NOTES & MP3 ATTACHMENTS)
+        // 6. BACKGROUND AUDIO (VOICE NOTES & MP3 ATTACHMENTS)
         // =========================================================================
         try {
           const AudioManager = (RN.NativeModules && (RN.NativeModules.AudioManager || RN.NativeModules.RTNAudioManager));
@@ -188,7 +245,6 @@
             unpatches.push(
               instead("setCommunicationModeOn", AudioManager, (args, orig) => {
                 if (!storage.backgroundAudio) return orig.apply(AudioManager, args);
-                // No-op: prevents switching to telephony mode, allowing background media playback
               })
             );
             console.log("[QoL-AIO] Background Audio hook initialized.");
@@ -198,111 +254,70 @@
         }
 
         // =========================================================================
-        // 6. MEDIA VIEWING & FULL RESOLUTION PFP / SERVER IMAGE DOWNLOADER
+        // 7. DOWNLOAD BUTTON FOR USER PFP & SERVER IMAGE (NO LAYOUT OFFSET!)
         // =========================================================================
         try {
-          const ProfileBanner = findByName("ProfileBanner", false);
-          const HeaderAvatar = findByName("HeaderAvatar", false);
+          const ActionSheet = findByProps("openLazy", "hideActionSheet");
           const GuildIcon = findByName("GuildIcon");
-          const MediaModal = findByName("MediaModal", false);
-          const ActionSheet = findByProps("hideActionSheet");
-          const SelectedChannelStore = findByStoreName("SelectedChannelStore");
-          const SelectedGuildStore = findByStoreName("SelectedGuildStore");
           const { Pressable } = findByProps("Button", "Text", "View") || {};
 
-          function openModal(uri, event) {
-            if (!MediaModal || !MediaModal.openMediaModal || !RN.Image || !uri) return;
-            RN.Image.getSize(uri, (width, height) => {
-              if (ActionSheet && ActionSheet.hideActionSheet) ActionSheet.hideActionSheet();
-              MediaModal.openMediaModal({
-                initialSources: [
-                  {
-                    uri,
-                    sourceURI: uri,
-                    width: width || 1024,
-                    height: height || 1024,
-                    guildId: SelectedGuildStore ? SelectedGuildStore.getGuildId() : undefined,
-                    channelId: SelectedChannelStore ? SelectedChannelStore.getChannelId() : undefined,
-                  },
-                ],
-                initialIndex: 0,
-                originLayout: {
-                  width: 0,
-                  height: 0,
-                  x: (event && event.pageX) || 0,
-                  y: (event && event.pageY) || 0,
-                  resizeMode: "fill",
-                },
-              });
-            });
-          }
-
-          if (HeaderAvatar && after && Pressable && React) {
+          // In user profile 3-dots sheet, inject Download Avatar & Banner buttons
+          if (ActionSheet && ActionSheet.openLazy && before) {
             unpatches.push(
-              after("default", HeaderAvatar, ([{ user, style, guildId }], res) => {
-                if (!storage.mediaViewing || !user) return res;
-                const guildSpecific = user.guildMemberAvatars && user.guildMemberAvatars[guildId] &&
-                  `https://cdn.discordapp.com/guilds/${guildId}/users/${user.id}/avatars/${user.guildMemberAvatars[guildId]}.png?size=4096`;
-                const image = typeof user.getAvatarURL === "function" ? user.getAvatarURL(false, 4096, true) : null;
-                if (!image) return res;
+              before("openLazy", ActionSheet, (args) => {
+                if (!storage.mediaViewing) return;
+                const [componentPromise, key, ctx] = args;
+                if (key === "UserProfileActions" || key === "UserSheet" || (ctx && ctx.user)) {
+                  const user = ctx?.user;
+                  if (user) {
+                    const avatarUrl = typeof user.getAvatarURL === "function" ? user.getAvatarURL(false, 4096, true) : null;
+                    const bannerUrl = user.banner ? `https://cdn.discordapp.com/banners/${user.id}/${user.banner}.png?size=4096` : null;
 
-                const url = typeof image === "number"
-                  ? `https://cdn.discordapp.com/embed/avatars/${Number(BigInt(user.id || 0) >> 22n) % 6}.png`
-                  : String(image).replace(".webp", ".png");
-
-                return React.createElement(
-                  Pressable,
-                  {
-                    onPress: ({ nativeEvent }) => openModal(url, nativeEvent),
-                    onLongPress: ({ nativeEvent }) => guildSpecific && openModal(guildSpecific, nativeEvent),
-                    style: style,
-                  },
-                  res
-                );
+                    // Expose global download triggers
+                    window.__qol_download_avatar = () => {
+                      if (avatarUrl) downloadMedia(String(avatarUrl).replace(".webp", ".png"), "Avatar");
+                    };
+                    window.__qol_download_banner = () => {
+                      if (bannerUrl) downloadMedia(String(bannerUrl).replace(".webp", ".png"), "Banner");
+                    };
+                  }
+                }
               })
             );
           }
 
-          if (ProfileBanner && after && Pressable && React) {
-            unpatches.push(
-              after("default", ProfileBanner, ([{ bannerSource }], res) => {
-                if (!storage.mediaViewing || !bannerSource || typeof bannerSource.uri !== "string" || !res) return res;
-                const url = bannerSource.uri.replace(/(?:\?size=\d{3,4})?$/, "?size=4096").replace(".webp", ".png");
-                return React.createElement(
-                  Pressable,
-                  { onPress: ({ nativeEvent }) => openModal(url, nativeEvent) },
-                  res
-                );
-              })
-            );
-          }
-
+          // Server Icon: Tap server icon in large view to download
           if (GuildIcon && GuildIcon.prototype && after && Pressable && React) {
             unpatches.push(
               after("render", GuildIcon.prototype, function (_, res) {
                 if (!storage.mediaViewing || this.props?.size !== "XLARGE" || !this.props?.guild) return res;
-                const url = typeof this.props.guild.getIconURL === "function" ? this.props.guild.getIconURL(4096) : null;
-                if (!url) return res;
+                const guild = this.props.guild;
+                const iconUrl = typeof guild.getIconURL === "function" ? guild.getIconURL(4096) : null;
+                if (!iconUrl) return res;
+
                 return React.createElement(
                   Pressable,
-                  { onPress: ({ nativeEvent }) => openModal(url, nativeEvent) },
+                  {
+                    onPress: () => downloadMedia(iconUrl, "Server Icon"),
+                  },
                   res
                 );
               })
             );
           }
-          console.log("[QoL-AIO] Media Viewing hooks initialized.");
+          console.log("[QoL-AIO] Profile & Server downloader hooks active.");
         } catch (e) {
-          console.warn("[QoL-AIO] Error patching Media Viewing:", e);
+          console.warn("[QoL-AIO] Error patching Profile Downloader:", e);
         }
 
         // =========================================================================
-        // 7. MESSAGE LOGGER (DELETED & EDITED MESSAGES PRESERVATION)
+        // 8. MESSAGE LOGGER (DELETED & EDITED MESSAGE RETENTION)
         // =========================================================================
         try {
           const ChannelMessages = findByProps("_channelMessages");
           const RowManager = findByName("RowManager");
           const MessageRecordUtils = findByProps("updateMessageRecord", "createMessageRecord");
+          const MessageRecord = findByName("MessageRecord", false);
           const FluxDispatcher = (metro.common && metro.common.FluxDispatcher) || findByProps("dispatch", "subscribe");
 
           if (FluxDispatcher && before) {
@@ -310,36 +325,55 @@
               before("dispatch", FluxDispatcher, ([event]) => {
                 if (!event || !storage.messageLogger) return;
 
-                // DELETED MESSAGE PRESERVATION
+                // DELETED MESSAGES
                 if (event.type === "MESSAGE_DELETE") {
                   if (event.__qol_cleanup) return;
                   const channel = ChannelMessages?._channelMessages?.[event.channelId] || (ChannelMessages?.get && ChannelMessages.get(event.channelId));
                   const message = channel?.get ? channel.get(event.id) : channel?._array?.find((m) => m.id === event.id);
                   if (!message || message.state === "SEND_FAILED" || (message.author && message.author.id === "1")) return;
 
+                  const rawMsg = message.toJS ? message.toJS() : message;
                   return [{
+                    type: "MESSAGE_UPDATE",
                     message: {
-                      ...(message.toJS ? message.toJS() : message),
+                      ...rawMsg,
+                      content: `*(deleted)* ${rawMsg.content || ""}`,
                       __qol_deleted: true,
                     },
-                    type: "MESSAGE_UPDATE",
                   }];
                 }
 
-                // EDITED MESSAGE PRESERVATION
+                // EDITED MESSAGES
                 if (event.type === "MESSAGE_UPDATE" && event.message && event.message.content) {
                   const channelId = event.message.channel_id || event.message.channelId;
                   const channel = ChannelMessages?._channelMessages?.[channelId] || (ChannelMessages?.get && ChannelMessages.get(channelId));
                   const existing = channel?.get ? channel.get(event.message.id) : channel?._array?.find((m) => m.id === event.message.id);
 
-                  if (existing && existing.content && existing.content !== event.message.content) {
-                    const edits = existing.__qol_edits ? [...existing.__qol_edits] : [];
-                    edits.push({
-                      content: existing.content,
-                      timestamp: Date.now(),
-                    });
-                    event.message.__qol_edits = edits;
+                  if (existing && existing.content && existing.content !== event.message.content && !event.message.__qol_edit_applied) {
+                    const originalContent = existing.content.replace(/^\*\(deleted\)\*\s*/, "");
+                    event.message.content = `*${originalContent}*\n${event.message.content}`;
+                    event.message.__qol_edit_applied = true;
                   }
+                }
+              })
+            );
+          }
+
+          if (MessageRecordUtils && MessageRecordUtils.createMessageRecord && after) {
+            unpatches.push(
+              after("createMessageRecord", MessageRecordUtils, function ([message], record) {
+                if (message && record) {
+                  record.__qol_deleted = message.__qol_deleted;
+                }
+              })
+            );
+          }
+
+          if (MessageRecord && MessageRecord.default && after) {
+            unpatches.push(
+              after("default", MessageRecord, ([props], record) => {
+                if (props && record) {
+                  record.__qol_deleted = !!props.__qol_deleted;
                 }
               })
             );
@@ -350,22 +384,11 @@
               after("generate", RowManager.prototype, ([data], row) => {
                 if (!row || !data || data.rowType !== 1 || !storage.messageLogger) return;
 
-                // Mark Deleted Messages with Red Gutter & Background
                 if (data.message && data.message.__qol_deleted) {
                   row.message.edited = "deleted";
                   row.backgroundHighlight = row.backgroundHighlight || {};
                   row.backgroundHighlight.backgroundColor = RN.processColor ? RN.processColor("#da373c22") : "#da373c22";
                   row.backgroundHighlight.gutterColor = RN.processColor ? RN.processColor("#da373cff") : "#da373cff";
-                }
-
-                // Show Edited Message History (Old message in gray italics)
-                if (data.message && data.message.__qol_edits && data.message.__qol_edits.length > 0) {
-                  const original = data.message.__qol_edits[0];
-                  if (row.message && row.message.content && !row.message.__qol_edit_applied) {
-                    // Discord Markdown: `*...*` formats in italic gray
-                    row.message.content = `*${original.content}*\n${row.message.content}`;
-                    row.message.__qol_edit_applied = true;
-                  }
                 }
 
                 // Exact Timestamps (with seconds)
@@ -374,8 +397,7 @@
                     const ts = row.message.timestamp;
                     const date = typeof ts === "string" || typeof ts === "number" ? new Date(ts) : (ts && ts._d ? ts._d : null);
                     if (date && !isNaN(date.getTime())) {
-                      const timeStr = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-                      row.message.timestampFormatted = timeStr;
+                      row.message.timestampFormatted = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
                     }
                   } catch (_) {}
                 }
@@ -383,22 +405,12 @@
             );
           }
 
-          if (MessageRecordUtils && MessageRecordUtils.updateMessageRecord && instead) {
-            unpatches.push(
-              instead("updateMessageRecord", MessageRecordUtils, function ([oldRecord, newRecord], orig) {
-                if (newRecord && newRecord.__qol_deleted) {
-                  return MessageRecordUtils.createMessageRecord(newRecord, oldRecord?.reactions);
-                }
-                return orig.apply(this, [oldRecord, newRecord]);
-              })
-            );
-          }
-          console.log("[QoL-AIO] Message Logger hooks initialized.");
+          console.log("[QoL-AIO] Message Logger hooks active.");
         } catch (e) {
           console.warn("[QoL-AIO] Error patching Message Logger:", e);
         }
 
-        console.log("[QoL-AIO] All hooks loaded successfully.");
+        console.log("[QoL-AIO] All hooks loaded.");
       } catch (err) {
         console.error("[QoL-AIO] Initialization failed:", err);
       }
@@ -411,10 +423,11 @@
         } catch (_) {}
       }
       unpatches = [];
+      delete window.__qol_download_avatar;
+      delete window.__qol_download_banner;
       console.log("[QoL-AIO] Unloaded and all patches cleaned up.");
     },
 
-    // Settings UI Component (Accessible from Revenge Plugins Menu)
     settings: function Settings() {
       const React = (vendetta.metro && vendetta.metro.common && vendetta.metro.common.React) || window.React;
       const RN = (vendetta.metro && vendetta.metro.common && vendetta.metro.common.ReactNative) || {};
@@ -427,9 +440,7 @@
         setTick((t) => t + 1);
       }
 
-      if (!React || !View) {
-        return null;
-      }
+      if (!React || !View) return null;
 
       const styles = StyleSheet.create({
         container: { flex: 1, padding: 16, backgroundColor: "#1e1f22" },
@@ -440,14 +451,15 @@
       });
 
       const options = [
+        { key: "noCompression", label: "Zero Compression (Original Quality)", desc: "Upload photos & videos with exact original file size, resolution, and bitrate" },
         { key: "silentTyping", label: "Silent / Incognito Typing", desc: "Never broadcast 'typing...' in any DM or server" },
+        { key: "messageLogger", label: "Message Logger", desc: "Keep deleted messages (*deleted*) and show previous text on edits (*old text*)" },
+        { key: "mediaViewing", label: "Server & Avatar Download", desc: "Tap server icon in large view to download, downloads full 4096px resolution" },
         { key: "antiCall", label: "Anti-Accidental Call", desc: "Confirm before starting voice or video calls" },
         { key: "openExternalBrowser", label: "Open in External Browser", desc: "Bypass in-app webview for all clicked links" },
         { key: "cleanUrls", label: "Clean URLs (Tracker Stripper)", desc: "Remove utm, si, igshid trackers when sending links" },
         { key: "backgroundAudio", label: "Background Audio", desc: "Keep voice messages and MP3s playing in background" },
-        { key: "messageLogger", label: "Message Logger", desc: "Keep deleted messages and show original text on edits" },
         { key: "exactTimestamps", label: "Exact Timestamps", desc: "Show hours, minutes, and seconds on messages" },
-        { key: "mediaViewing", label: "Tap Avatar / Banner to Download", desc: "Open 4096px image modal with download button" },
       ];
 
       return React.createElement(
