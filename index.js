@@ -247,7 +247,17 @@
     );
   }
 
-  // Platform Indicators data & component (PlatformIndicators by MSMA)
+  // =========================================================================
+  // PLATFORM INDICATORS (BY MSMA)
+  // =========================================================================
+  const PLATFORM_SVG_PATHS = {
+    desktop: "M4 2.5c-1.103 0-2 .897-2 2v11c0 1.104.897 2 2 2h7v2H7v2h10v-2h-4v-2h7c1.103 0 2-.896 2-2v-11c0-1.103-.897-2-2-2H4Zm16 2v9H4v-9h16Z",
+    web: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93Zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39Z",
+    mobile: "M15.5 1h-8A2.5 2.5 0 0 0 5 3.5v17A2.5 2.5 0 0 0 7.5 23h8a2.5 2.5 0 0 0 2.5-2.5v-17A2.5 2.5 0 0 0 15.5 1zm-4 21c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4.5-4H7V4h9v14z",
+    embedded: "M5.79335761,5 L18.2066424,5 C19.7805584,5 21.0868816,6.21634264 21.1990185,7.78625885 L21.8575059,17.0050826 C21.9307825,18.0309548 21.1585512,18.9219909 20.132679,18.9952675 C20.088523,18.9984215 20.0442685,19 20,19 C18.8245863,19 17.8000084,18.2000338 17.5149287,17.059715 L17,15 L7,15 L6.48507125,17.059715 C6.19999155,18.2000338 5.1754137,19 4,19 C2.97151413,19 2.13776159,18.1662475 2.13776159,17.1377616 C2.13776159,17.0934931 2.1393401,17.0492386 2.1424941,17.0050826 L2.80098151,7.78625885 C2.91311838,6.21634264 4.21944161,5 5.79335761,5 Z",
+    vr: "M15.55 5a5.5 5.5 0 0 1 5.15 3.67h.3a2 2 0 0 1 2 2v3.18a2 2 0 0 1-2 1.99h-.2A4.54 4.54 0 0 1 16.55 19a4.45 4.45 0 0 1-3.6-1.83 1.2 1.2 0 0 0-1.9 0 4.44 4.44 0 0 1-3.9 1.82 4.54 4.54 0 0 1-3.94-3.15H3a2 2 0 0 1-2-2v-3.18c0-1.1.9-1.99 2-1.99h.3A5.5 5.5 0 0 1 8.46 5h7.09Zm-7.1 2C6.6 7 5.06 8.5 4.97 10.41l-.02.66v3.18c0 1.43 1.05 2.66 2.34 2.74.85.06 1.63-.32 2.14-1.01a3.2 3.2 0 0 1 2.57-1.3c1 0 1.97.48 2.57 1.3.5.69 1.3 1.08 2.14 1.01 1.3-.08 2.34-1.31 2.34-2.74l-.02-3.84a3.54 3.54 0 0 0-3.49-3.43H8.45Z",
+  };
+
   const STATUS_COLORS = {
     online: "#23a55a",
     idle: "#f0b232",
@@ -255,65 +265,160 @@
     offline: "#80848e",
   };
 
-  const PLATFORM_ICONS = {
-    desktop: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAMAAABiM0N1AAAAVFBMVEUAAACvv7+3u7+5u7+2ub+4u726vL65u765vL65vMG5u723ub23v7+3t7+6vL+4ur+6u765u764vL+4ur23t7+7vb+3ur25ur64ur+7u766ur6vr7/+1nXbAAAAHHRSTlMAEEB/UHDv/99fgIAgQJ+f7++fnyB/YN9vTz8QSaZf3QAAAI1JREFUeAHt1tUBwkAURNEXHZzg1n+d2Fc8u4OTOQXcyKqJ3ARh5C22qiQFYTC0khFIYyuYgDYthGagzQuhDLRFIYS7yBPuakLmSaF2CimkkEIKKfT8I5un0MdCT7v6LUFbFUIhaGsr2IAUWcl2B0K2t6pDVKttGR5P3BJvpxCnfdTMHVo9NaRQ1MpKRC5jHSw3VFQzIwAAAABJRU5ErkJggg==",
-    web: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAQAAAD/5HvMAAADgklEQVR42u3a32vVdRzH8VdOv2NzGzM7bkp0E9F9RQSbOmK6groQpeugOzXJfnCW3YwgC4IyHCldrBmFELtQRxfK2MHp1sjVZRfBMSJFYu6cMUnOOZPz9Gb45uyc79fv5/tDvDiPv+DJh/fn8+HL56umpqbHFZsZ4hjjzJOnQJkyBfLMM87H7GWzHh16OcoVKgQpM8N79Cht7GaSVcJa5QK7lBZe5SpRzDCgpLGdH6gS3SRPKzm8xTJxFTmgJNDKtyRllFbFQxfTRLVCvSk6FR3b+J3onuRTlllvgUzk1YmVsyJJdPMN1bqkzmizM00cc1rDIP9SawpPrjhFPAf1AN1cotZJ940ezwKb1q33BLX2Kzx2sBwzZ7vWoYXvAVOkV2FxlqjuMMtBNqkBNpIDzI/h7ywnTsfIP5gquxUGV3EiB7zMPcxlPRwDOJITTgNmpx6GyZSDnqKAOa9g9LKKIzniA0yFbQrC+5B6UDf/Y44oCFdwdUPOGMfkgr8kyrg6Lmf0YUq0yw9DuLnBcTw5YwNFzB754RhmkYaUCH7BDMsPZzDDZFMM+gQzJj/8inlTYiS1oNcws/LD35jnJUtKPOgFzHX5YQmzdmCRTSXoGcyi/FDGtEqWlHhQG6YULsjTA4zg5iZf4CkAXrig25gtUowk+FwB2IpZDDfUz8pEWiUF4DnM9XDbfkiKl6QAvB5u248H38KMJBZ0FDMW7uo4qwbIJhQ0gcnKD3sxN3lCirNKgZfrf5hB+aGdEuYVNUQ2dtAuTIk2+WMG87V8MBIzaBQzrdDDVqBDPuIE0cUy5rCC0MMq5lAqQR9hKmRcPoNu0ZF0EN0sYs7JBAyc+UwNsUJYd7nGO2zUGr4CTL9MqMGu8KIaYB43C2yVJPq4h8kpDAaoYv6kS3U4jKvfaGELeUyVfoXDT4C5wAatg8cfuHqbS4A54/K8UgTMd/WnNjuckyqAKdCj8DhArdO0NFilQ8xxhyiq7JMbRqk1GXAEuDshV3hMUesvXkoo6CKe3NHJArUqfEln7KBrdCgaMnVJcIsPa6OcczKKjk6mqFfkFH20RAi6SIfiweMkjS0xwTBvEFaVE3hKAvspEleBfUoOvTGfOH+mJ40X6ctEkaNfaWEn56kQVoVz9CltZDhCjhJBSuR4l4weHdrZwzBjzJFniTJlbpNnljGyDNLW/BmlqelxdR++AoGbDB4jjAAAAABJRU5ErkJggg==",
-    mobile: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAMAAADVRocKAAAAXVBMVEUAAAAwMDgwMDUwMDUuMDYwMDYvMTcvMTYvMTYwMDYwMDUvMTYwMjUvMTUvMjYvMTUuMDUuMDQvMDUtMTUwMDgvMDUwMDAtMDYuMDYwMDAtMDUvMDYuMDUtMDcpMTo5aAq8AAAAH3RSTlMAIGBvf1C//89fMN9g75+/j3+fP0C/IFBfMGDPb08fcZ9WCgAAAMNJREFUeAHt2YWNxQAMg2EX/fiVud1/zBuhSaRjfwv8UsQx5J9L0iw/VySIyUoaXa7wu93pcE/g9KDTFS4F+amF5Em3ZwK7FwPeMEsYcoNVxZAaViX5uTd6MuQJKwY5A01u9goFWph1fyKggAIKKKCAAgoooIACCiiggAIKKKCAAgoooIACn/l9d/t3gU/fcEqG9LDKGVLB6saQAZ97owZ2w5NuzwEOKd1G4FMLE5wG36Y/w29ZadRviBn2/Nw2HfjTPgD3/UVA1TCAGgAAAABJRU5ErkJggg==",
-    embedded: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAMAAABiM0N1AAAAk1BMVEUAAAC3u7+4ur+5vL+5u765u7+6vL+2ub+3v7+6u7+5vL66v7+6vL65u761ur+4u765vL+3t7+6u765u7+9vb23t7+7vb+6u766ur+5ur6/v7+vv7+9vcW1tb+5u727u763ur25vL+6vL+3ub24ur+5u7+4vL+5ur66ur64ur25vL+6u764ur24u722uby5u76vr7/eehxsAAAAMXRSTlMAQJ/f/8+fUCC/3zDv7zC/UEDvfx8gf88w3xAQHzCAT2Bfb4Bvj5/PP6+vv59wUM8QEONx+AAAAWZJREFUeAHt1dWa6zAMBOA5PSqzs2Vmhvd/uWWcVFHqr5f+r+3JRqtJ8UhBEAT/Mv8lpWwuD02hKHcpFXBTuSJ3qtZwQ0HPUVULiCuJhzpiGuKlCZaTL3gnxEVPaLWdkAxYJznIdfGmy0k9MEkOivChLQSkbwS18KElZEBBLSMIX4QMuRxaEJ0vCBndCkJMbEZjIRO6MTWCqjWlRjO6MTeCpLoooDWuCFvSjcgK0pYzohsrM0hZzhXdWJtBynJyR4rGv19dzrp3EC3nhoJKZpCynNxalzqIlrPKU7WDlOXUym8H0XIOufy+htxZX9tHBU24/L5mXH5fSy6/r4jL/8sOidYJv2x7fu0k84SgIn/Qmb50dT2oB6YXk+tf4hElWuuPdeaIlCFx/fkLeM+Q1Ferw3RQZ9SmP8jQlR9H/NZ3tKmG08+sW/SMnrxzZ6Qy/TrfBWkdL+Lq0RUptaYHJyU+HwRB4O0FjTMnvIkvoBQAAAAASUVORK5CYII=",
-  };
-
-  function StatusIconsComp({ userId, size = 14 }) {
+  function StatusIconSingle({ platform, color, size = 15 }) {
     const React = getReact();
     const RN = getRN();
     const metro = vendetta?.metro;
-    const PresenceStore = (metro?.findByStoreName && metro.findByStoreName("PresenceStore")) || metro?.findByProps("getState");
-    const SessionsStore = (metro?.findByStoreName && metro.findByStoreName("SessionsStore")) || metro?.findByProps("getSessions");
-    const UserStore = (metro?.findByStoreName && metro.findByStoreName("UserStore")) || metro?.findByProps("getCurrentUser");
+    const SvgModule = (metro?.findByProps && metro.findByProps("SvgXml")) || (metro?.findByName && metro.findByName("Svg", false));
+    const Svg = SvgModule?.Svg || SvgModule?.default || SvgModule;
+    const Path = SvgModule?.Path;
 
-    function getUserStatuses(uid) {
-      if (!uid) return null;
-      try {
-        const currentUserId = UserStore?.getCurrentUser?.()?.id;
-        if (uid === currentUserId && SessionsStore?.getSessions) {
-          const sessions = SessionsStore.getSessions();
-          if (sessions) {
-            const acc = {};
-            Object.values(sessions).forEach((curr) => {
-              if (curr?.clientInfo?.client && curr.clientInfo.client !== "unknown") {
-                acc[curr.clientInfo.client] = curr.status;
-              }
-            });
-            return acc;
-          }
-        }
-        const state = PresenceStore?.getState?.();
-        return state?.clientStatuses?.[uid] || null;
-      } catch (_) {
-        return null;
-      }
+    if (Svg && Path && PLATFORM_SVG_PATHS[platform]) {
+      return React.createElement(
+        RN.View,
+        { style: { width: size, height: size, marginRight: 3, justifyContent: "center", alignItems: "center" } },
+        React.createElement(
+          Svg,
+          { width: size, height: size, viewBox: "0 0 24 24", fill: color },
+          React.createElement(Path, { d: PLATFORM_SVG_PATHS[platform], fill: color })
+        )
+      );
     }
 
-    const statuses = getUserStatuses(userId);
+    const getAsset = vendetta?.ui?.assets?.getAssetIDByName || vendetta?.ui?.toasts?.getAssetIDByName;
+    const assetId = getAsset
+      ? platform === "mobile"
+        ? getAsset("ic_mobile_device")
+        : platform === "web"
+        ? getAsset("ic_globe_24px")
+        : getAsset("ic_monitor_24px")
+      : null;
+
+    if (assetId) {
+      return React.createElement(RN.Image, {
+        style: { width: size, height: size, tintColor: color, marginRight: 3 },
+        source: assetId,
+      });
+    }
+
+    return React.createElement(RN.View, {
+      style: {
+        width: Math.max(6, size - 7),
+        height: Math.max(6, size - 7),
+        borderRadius: size / 2,
+        backgroundColor: color,
+        marginRight: 3,
+      },
+    });
+  }
+
+  let presenceCache = null;
+  let presenceCacheTime = 0;
+
+  function getCachedPresenceState() {
+    const metro = vendetta?.metro;
+    const now = Date.now();
+    if (!presenceCache || now - presenceCacheTime > 3000) {
+      const PresenceStore = (metro?.findByStoreName && metro.findByStoreName("PresenceStore")) || (metro?.findByProps && metro.findByProps("getState"));
+      presenceCache = PresenceStore?.getState ? PresenceStore.getState() : null;
+      presenceCacheTime = now;
+    }
+    return presenceCache;
+  }
+
+  function getUserPlatformStatuses(userId) {
+    if (!userId) return null;
+    const metro = vendetta?.metro;
+    try {
+      const UserStore = (metro?.findByStoreName && metro.findByStoreName("UserStore")) || (metro?.findByProps && metro.findByProps("getCurrentUser"));
+      const SessionsStore = (metro?.findByStoreName && metro.findByStoreName("SessionsStore")) || (metro?.findByProps && metro.findByProps("getSessions"));
+      const currentUserId = UserStore?.getCurrentUser?.()?.id;
+
+      if (userId === currentUserId && SessionsStore?.getSessions) {
+        const sessions = SessionsStore.getSessions();
+        if (sessions && typeof sessions === "object") {
+          const res = {};
+          Object.values(sessions).forEach((s) => {
+            if (s?.clientInfo?.client && s.clientInfo.client !== "unknown") {
+              res[s.clientInfo.client] = s.status || "online";
+            }
+          });
+          if (Object.keys(res).length > 0) return res;
+        }
+      }
+
+      const state = getCachedPresenceState();
+      if (state && state.clientStatuses && state.clientStatuses[userId]) {
+        return state.clientStatuses[userId];
+      }
+
+      // Fallback: check status directly from presence store
+      const PresenceStore = (metro?.findByStoreName && metro.findByStoreName("PresenceStore")) || (metro?.findByProps && metro.findByProps("getState"));
+      if (PresenceStore?.getStatus) {
+        const st = PresenceStore.getStatus(userId);
+        if (st && st !== "offline") {
+          return { desktop: st };
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function PresenceUpdatedContainer({ userId, size = 15 }) {
+    const React = getReact();
+    const RN = getRN();
+    const [tick, setTick] = React.useState(0);
+
+    React.useEffect(() => {
+      const FluxDispatcher =
+        (vendetta?.metro?.common && vendetta.metro.common.FluxDispatcher) ||
+        (vendetta?.metro && vendetta.metro.findByProps("dispatch", "subscribe"));
+
+      if (FluxDispatcher && typeof FluxDispatcher.subscribe === "function") {
+        const onPresence = (e) => {
+          if (!e) return;
+          if (e.updates && Array.isArray(e.updates)) {
+            if (e.updates.some((u) => u?.user?.id === userId)) {
+              presenceCache = null;
+              setTick((t) => t + 1);
+            }
+          } else {
+            presenceCache = null;
+            setTick((t) => t + 1);
+          }
+        };
+        FluxDispatcher.subscribe("PRESENCE_UPDATES", onPresence);
+        return () => {
+          try {
+            FluxDispatcher.unsubscribe("PRESENCE_UPDATES", onPresence);
+          } catch (_) {}
+        };
+      }
+    }, [userId]);
+
+    const statuses = getUserPlatformStatuses(userId);
     if (!statuses) return null;
     const platforms = Object.keys(statuses);
     if (!platforms.length) return null;
 
     return React.createElement(
       RN.View,
-      { style: { flexDirection: "row", alignItems: "center", marginLeft: 4 } },
+      {
+        style: {
+          flexDirection: "row",
+          alignItems: "center",
+          marginLeft: 4,
+        },
+      },
       platforms.map((p) => {
         const color = STATUS_COLORS[statuses[p]] || STATUS_COLORS.online;
-        const uri = PLATFORM_ICONS[p];
-        if (uri) {
-          return React.createElement(RN.Image, {
-            key: p,
-            style: { width: size, height: size, tintColor: color, marginRight: 2 },
-            source: { uri },
-          });
-        }
-        return React.createElement(RN.View, {
+        return React.createElement(StatusIconSingle, {
           key: p,
-          style: { width: size - 4, height: size - 4, borderRadius: 5, backgroundColor: color, marginRight: 2 },
+          platform: p,
+          color: color,
+          size: size,
         });
       })
     );
@@ -1296,50 +1401,249 @@
         // 9. PLATFORM INDICATORS (BY MSMA)
         // =========================================================================
         try {
-          const UserRowComp = findByName ? findByName("UserRow") : null;
-          const GuildMemberRowComp = findByName ? findByName("GuildMemberRow") : null;
-          [UserRowComp, GuildMemberRowComp].filter(Boolean).forEach((Row) => {
-            unpatches.push(
-              after("default", Row, ([props], res) => {
-                if (!storage.platformIndicators || !props || !props.user || !res) return res;
-                const userId = props.user.id;
-                if (findInReactTree(res, (c) => c?.key === "QoLPlatformIcons")) return res;
-                return React.createElement(
+          const getModuleWithImportedPath =
+            window.revenge?.discord?.utils?.modules?.finders?.getModuleWithImportedPath ||
+            window.revenge?.discord?.utils?.finders?.getModuleWithImportedPath;
+
+          function hookModule(importedPath, metroGetter, beforeFn, afterFn) {
+            let patched = false;
+            function doPatch(ns) {
+              if (patched || !ns) return;
+              const target = ns?.default ?? ns;
+              const isMemo = target !== null && typeof target === "object" && typeof target.type === "function";
+              const owner = isMemo ? target : ns;
+              const key = isMemo ? "type" : "default";
+
+              if (owner && typeof owner[key] === "function") {
+                patched = true;
+                if (beforeFn && before) {
+                  unpatches.push(before(key, owner, beforeFn));
+                }
+                if (afterFn && after) {
+                  unpatches.push(after(key, owner, afterFn));
+                }
+                console.log(`[QoL-AIO] PlatformIndicators hooked ${importedPath || "module"} on ${key}`);
+              }
+            }
+
+            if (getModuleWithImportedPath && importedPath) {
+              try {
+                getModuleWithImportedPath(importedPath, (mod) => doPatch(mod));
+              } catch (_) {}
+            }
+
+            if (metroGetter) {
+              try {
+                const mod = metroGetter();
+                if (mod) doPatch(mod);
+              } catch (_) {}
+            }
+          }
+
+          // A. Hook UsernameWithEffects (all usernames in chat, DMs, headers, profiles)
+          hookModule(
+            "modules/display_name_styles/native/UsernameWithEffects.tsx",
+            () => findByProps("AVERAGE_FONT_WIDTH_RATIO"),
+            (args) => {
+              if (args && args[0] && args[0].userId) {
+                if (!args[0].style) args[0].style = {};
+                args[0].style.__platformindicators_userId = args[0].userId;
+              }
+              return args;
+            },
+            (args, res) => {
+              if (!storage.platformIndicators || !res) return res;
+              const userId = args?.[0]?.userId || res?.props?.style?.__platformindicators_userId;
+              if (!userId) return res;
+              if (findInReactTree(res, (c) => c?.key === "QoLPlatformIconsWrap")) return res;
+
+              return React.createElement(
+                RN.View,
+                {
+                  key: "QoLPlatformIconsWrap",
+                  style: {
+                    flexDirection: "row",
+                    alignItems: "center",
+                  },
+                },
+                res,
+                React.createElement(PresenceUpdatedContainer, {
+                  key: "QoLPI",
+                  userId: userId,
+                  size: 14,
+                })
+              );
+            }
+          );
+
+          // B. Hook UserRow (Member list in channels / tabs v2)
+          hookModule(
+            "modules/main_tabs_v2/native/shared_components/user_list/UserRow.tsx",
+            () => findByProps("UserRowModes"),
+            null,
+            (args, res) => {
+              if (!storage.platformIndicators || !res) return res;
+              const userId = args?.[0]?.user?.id || findInReactTree(res, (m) => m?.props?.userId)?.props?.userId;
+              if (!userId) return res;
+              if (findInReactTree(res, (c) => c?.key === "QoLPlatformIconsUserRow")) return res;
+
+              const nameContainer = findInReactTree(
+                res,
+                (m) => m?.props?.children && Array.isArray(m.props.children) && m.props.children.some((h) => h?.props?.variant === "text-md/semibold")
+              );
+              if (nameContainer && Array.isArray(nameContainer.props?.children)) {
+                const idx = nameContainer.props.children.findIndex((h) => h?.props?.variant === "text-md/semibold");
+                if (idx !== -1) {
+                  nameContainer.props.children.splice(
+                    idx + 1,
+                    0,
+                    React.createElement(PresenceUpdatedContainer, {
+                      key: "QoLPlatformIconsUserRow",
+                      userId: userId,
+                      size: 14,
+                    })
+                  );
+                  return res;
+                }
+              }
+
+              if (res.props && res.props.label) {
+                const origLabel = res.props.label;
+                res.props.label = React.createElement(
                   RN.View,
-                  { key: "QoLPlatformIcons", style: { flexDirection: "row", alignItems: "center" } },
-                  res,
-                  React.createElement(StatusIconsComp, { userId })
+                  {
+                    key: "QoLPlatformIconsUserRow",
+                    style: { flexDirection: "row", alignItems: "center" },
+                  },
+                  origLabel,
+                  React.createElement(PresenceUpdatedContainer, { userId: userId, size: 14 })
                 );
+              }
+              return res;
+            }
+          );
+
+          // C. Hook findByTypeNameAll("UserRow") as additional fallback for Vendetta/Bunny
+          if (metro?.findByTypeNameAll) {
+            try {
+              const rows = metro.findByTypeNameAll("UserRow");
+              rows.forEach((UserRow) => {
+                unpatches.push(
+                  after("type", UserRow, ([{ user }], res) => {
+                    if (!storage.platformIndicators || !user || !res || !res.props) return res;
+                    if (findInReactTree(res.props.label, (c) => c?.key === "QoLPI_TV2")) return res;
+                    res.props.label = React.createElement(
+                      RN.View,
+                      {
+                        key: "QoLPI_TV2",
+                        style: { flexDirection: "row", alignItems: "center" },
+                      },
+                      res.props.label,
+                      React.createElement(PresenceUpdatedContainer, { userId: user.id, size: 14 })
+                    );
+                  })
+                );
+              });
+            } catch (_) {}
+          }
+
+          // D. Hook GuildMemberRow (server member list)
+          const Rows = findByProps("GuildMemberRow");
+          if (Rows?.GuildMemberRow && after) {
+            unpatches.push(
+              after("type", Rows.GuildMemberRow, ([{ user }], res) => {
+                if (!storage.platformIndicators || !user || !res) return res;
+                if (findInReactTree(res, (c) => c?.key === "QoLPlatformIconsGMR")) return res;
+                const row = findInReactTree(res, (c) => c?.props?.style?.flexDirection === "row");
+                if (row && row.props && Array.isArray(row.props.children)) {
+                  row.props.children.splice(
+                    2,
+                    0,
+                    React.createElement(
+                      RN.View,
+                      { key: "QoLPlatformIconsGMR", style: { flexDirection: "row", alignItems: "center", marginLeft: 4 } },
+                      React.createElement(PresenceUpdatedContainer, { userId: user.id, size: 14 })
+                    )
+                  );
+                }
               })
             );
-          });
+          }
 
-          const findByTypeName = metro?.findByTypeName;
-          const MessagesItemChannelContent = findByTypeName ? findByTypeName("MessagesItemChannelContent") : null;
-          if (MessagesItemChannelContent && after) {
+          // E. Hook DisplayName & DefaultName (profiles)
+          const DisplayName = findByProps("DisplayName");
+          if (DisplayName && after) {
+            const key = DisplayName.DisplayName ? "DisplayName" : "default";
             unpatches.push(
-              after("type", MessagesItemChannelContent, (args, res) => {
-                if (!storage.platformIndicators) return res;
-                const channel = args && args[0]?.channel;
-                if (channel && channel.recipients && channel.recipients.length === 1) {
-                  const userId = channel.recipients[0];
-                  if (findInReactTree(res, (m) => m?.key === "QoLPlatformIconsDM")) return res;
-                  const nameContainer = findInReactTree(res, (m) => m?.props?.children && Array.isArray(m.props.children) && m.props.children.some((h) => h?.props?.ellipsizeMode));
-                  if (nameContainer && nameContainer.props && nameContainer.props.children) {
-                    const orig = nameContainer.props.children[0];
-                    nameContainer.props.children = React.createElement(
-                      RN.View,
-                      { key: "QoLPlatformIconsDM", style: { flexDirection: "row", alignItems: "center" } },
-                      orig,
-                      React.createElement(StatusIconsComp, { userId })
-                    );
-                  }
+              after(key, DisplayName, ([props], res) => {
+                if (!storage.platformIndicators || !props || !props.user || !res) return res;
+                const userId = props.user.id;
+                if (findInReactTree(res, (m) => m?.key === "QoLPlatformIconsDN")) return res;
+                const row = findInReactTree(res, (m) => m?.props?.style?.flexDirection === "row");
+                if (row && Array.isArray(row.props?.children)) {
+                  row.props.children.push(
+                    React.createElement(PresenceUpdatedContainer, {
+                      key: "QoLPlatformIconsDN",
+                      userId: userId,
+                      size: 15,
+                    })
+                  );
                 }
                 return res;
               })
             );
           }
-          console.log("[QoL-AIO] PlatformIndicators hook active.");
+
+          // F. Hook ChannelHeader (DM top bar)
+          const ChannelHeader = findByName ? findByName("ChannelHeader", false) : null;
+          if (ChannelHeader && after) {
+            unpatches.push(
+              after("default", ChannelHeader, (args, res) => {
+                if (!storage.platformIndicators || !res) return res;
+                const childType = res.type?.type || res.type;
+                if (childType?.name === "PrivateChannelHeader" && after) {
+                  unpatches.push(
+                    after("type", res.type, (args, headerRes) => {
+                      const userId = findInReactTree(headerRes, (m) => m?.props?.user?.id)?.props?.user?.id;
+                      if (!userId) return headerRes;
+                      if (findInReactTree(headerRes, (m) => m?.key === "QoLPlatformIconsHeader")) return headerRes;
+
+                      const titleContainer = findInReactTree(
+                        headerRes,
+                        (m) => m?.props?.children && Array.isArray(m.props.children) && m.props.children.some((c) => c?.props?.variant?.includes("heading"))
+                      );
+                      if (titleContainer && Array.isArray(titleContainer.props.children)) {
+                        titleContainer.props.children.push(
+                          React.createElement(PresenceUpdatedContainer, {
+                            key: "QoLPlatformIconsHeader",
+                            userId: userId,
+                            size: 16,
+                          })
+                        );
+                      }
+                      return headerRes;
+                    })
+                  );
+                }
+                return res;
+              })
+            );
+          }
+
+          // G. Remove Default Mobile Status Icon (matches MSMA plugin option)
+          const StatusComp = findByName ? findByName("Status", false) : null;
+          if (StatusComp && before) {
+            unpatches.push(
+              before("default", StatusComp, (args) => {
+                if (storage.platformIndicators && args && args[0]) {
+                  args[0].isMobileOnline = false;
+                }
+                return args;
+              })
+            );
+          }
+
+          console.log("[QoL-AIO] PlatformIndicators hooks active.");
         } catch (e) {
           console.warn("[QoL-AIO] Error patching PlatformIndicators:", e);
         }
