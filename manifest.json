@@ -1,12 +1,12 @@
 {
   "name": "QoL-AIO",
-  "description": "All-in-One Quality of Life: Built-in Plugin Store (166 plugins with ratings) & Theme Store (193 themes), Hold-down Avatar/Banner Download, Zero Compression uploads, Silent Typing, Message Logger, Anti-Accidental Call, External Browser, and Exact Timestamps.",
+  "description": "All-in-One Quality of Life: Built-in Plugin Store (166 plugins with ratings) & Theme Store (193 themes), System Emoji, No Compression, FileSizeOnPicker, NoBandwidthKick, FreeStickers, AltMediaPicker, Bluetooth Audio Fix, PlatformIndicators, Avatar/Banner Downloader, Message Logger, and more.",
   "authors": [
     {
       "name": "Milky"
     }
   ],
   "main": "index.js",
-  "version": "1.3.0",
-  "hash": "1b5126877b417c73c426de7f03555997ea9406fca7349654822b3e16977b3746"
+  "version": "1.4.0",
+  "hash": "0e36322ded2769f0afa11d45b1acd33385ee57b8cd1d4a96a7ae50f22738c7e9"
 }
