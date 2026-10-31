@@ -365,8 +365,15 @@ const code = `(function (v) {
         if (sessions && typeof sessions === "object") {
           const res = {};
           Object.values(sessions).forEach((s) => {
-            if (s?.clientInfo?.client && s.clientInfo.client !== "unknown") {
-              res[s.clientInfo.client] = s.status || "online";
+            if (!s || s.status === "invisible" || s.status === "offline") return;
+            const client = s?.clientInfo?.client;
+            if (client && client !== "unknown") {
+              const platform = client.toLowerCase();
+              if (platform === "desktop" || platform === "mobile" || platform === "web") {
+                if (!res[platform]) {
+                  res[platform] = s.status || "online";
+                }
+              }
             }
           });
           if (Object.keys(res).length > 0) return res;
@@ -528,9 +535,6 @@ const code = `(function (v) {
               setTick((t) => t + 1);
             }
           } else if (e.user?.id === userId || e.userId === userId) {
-            presenceCache = null;
-            setTick((t) => t + 1);
-          } else {
             presenceCache = null;
             setTick((t) => t + 1);
           }
@@ -1638,9 +1642,15 @@ const code = `(function (v) {
             null,
             (args, res) => {
               if (!storage.platformIndicators || !res) return res;
-              const userId = args?.[0]?.userId;
+              const uProps = args?.[0];
+              const userId =
+                uProps?.userId ||
+                uProps?.user?.id ||
+                uProps?.author?.id ||
+                uProps?.message?.author?.id ||
+                uProps?.member?.user?.id;
               if (!userId) return res;
-              if (findInReactTree(res, (c) => c?.key === "QoLPlatformIconsWrap" || c?.key === "QoLPI")) return res;
+              if (findInReactTree(res, (c) => c?.key === "QoLPlatformIconsWrap" || c?.key === "QoLPI" || c?.key === "QoLPlatformIconsGMR" || c?.key === "QoLPlatformIconsDN")) return res;
 
               return React.createElement(
                 RN.View,
@@ -1661,52 +1671,7 @@ const code = `(function (v) {
             }
           );
 
-          // B. Hook GuildMemberRow (server member list fallback)
-          const Rows = findByProps("GuildMemberRow");
-          if (Rows?.GuildMemberRow && after) {
-            unpatches.push(
-              after("type", Rows.GuildMemberRow, ([{ user }], res) => {
-                if (!storage.platformIndicators || !user || !res) return res;
-                if (findInReactTree(res, (c) => c?.key === "QoLPlatformIconsGMR" || c?.key === "QoLPlatformIconsWrap" || c?.key === "QoLPI")) return res;
-                const row = findInReactTree(res, (c) => c?.props?.style?.flexDirection === "row");
-                if (row && row.props && Array.isArray(row.props.children)) {
-                  row.props.children.splice(
-                    2,
-                    0,
-                    React.createElement(
-                      RN.View,
-                      { key: "QoLPlatformIconsGMR", style: { flexDirection: "row", alignItems: "center", marginLeft: 4 } },
-                      React.createElement(PresenceUpdatedContainer, { userId: user.id, size: 14 })
-                    )
-                  );
-                }
-              })
-            );
-          }
-
-          // C. Hook DisplayName & DefaultName (profiles)
-          const DisplayName = findByProps("DisplayName");
-          if (DisplayName && after) {
-            const key = DisplayName.DisplayName ? "DisplayName" : "default";
-            unpatches.push(
-              after(key, DisplayName, ([props], res) => {
-                if (!storage.platformIndicators || !props || !props.user || !res) return res;
-                const userId = props.user.id;
-                if (findInReactTree(res, (m) => m?.key === "QoLPlatformIconsDN" || m?.key === "QoLPlatformIconsWrap" || m?.key === "QoLPI")) return res;
-                const row = findInReactTree(res, (m) => m?.props?.style?.flexDirection === "row");
-                if (row && Array.isArray(row.props?.children)) {
-                  row.props.children.push(
-                    React.createElement(PresenceUpdatedContainer, {
-                      key: "QoLPlatformIconsDN",
-                      userId: userId,
-                      size: 15,
-                    })
-                  );
-                }
-                return res;
-              })
-            );
-          }
+          // Hooks B & C removed: UsernameWithEffects already handles all member rows and profiles cleanly without duplicating or mutating children arrays.
 
           // D. Hook ChannelHeader (DM top bar)
           const ChannelHeader = findByName ? findByName("ChannelHeader", false) : null;
@@ -2170,12 +2135,19 @@ const code = `(function (v) {
         // 15. MESSAGE LOGGER (DELETED & EDITED MESSAGE RETENTION)
         // =========================================================================
         try {
-          const ChannelMessages = findByProps("_channelMessages");
+          const ChannelMessages =
+            (metro?.findByStoreName && metro.findByStoreName("MessageStore")) ||
+            findByProps("_channelMessages") ||
+            findByProps("getMessages");
           const RowManager = findByName("RowManager");
           const MessageRecordUtils = findByProps("updateMessageRecord", "createMessageRecord");
           const MessageRecord = findByName("MessageRecord", false);
-          const UserStore = (metro?.findByStoreName && metro.findByStoreName("UserStore")) || findByProps("getCurrentUser");
-          const FluxDispatcher = (metro?.common && metro.common.FluxDispatcher) || findByProps("dispatch", "subscribe");
+          const UserStore =
+            (metro?.findByStoreName && metro.findByStoreName("UserStore")) ||
+            findByProps("getCurrentUser");
+          const FluxDispatcher =
+            (metro?.common && metro.common.FluxDispatcher) ||
+            findByProps("dispatch", "subscribe");
 
           if (FluxDispatcher && before) {
             unpatches.push(
@@ -2186,15 +2158,45 @@ const code = `(function (v) {
                 if (event.type === "MESSAGE_DELETE") {
                   if (event.__qol_cleanup) return;
                   try {
-                    const channel = ChannelMessages?._channelMessages?.[event.channelId] || (ChannelMessages?.get && ChannelMessages.get(event.channelId));
-                    const message = channel?.get ? channel.get(event.id) : channel?._array?.find((m) => m.id === event.id);
-                    if (!message || message.state === "SEND_FAILED" || (message.author && message.author.id === "1")) return;
+                    const channelId = event.channelId || event.channel_id;
+                    const messageId = event.id || event.messageId;
+                    if (!channelId || !messageId) return;
+
+                    const channel =
+                      (ChannelMessages?.get && ChannelMessages.get(channelId)) ||
+                      (ChannelMessages?.getMessages && ChannelMessages.getMessages(channelId)) ||
+                      ChannelMessages?._channelMessages?.[channelId];
+                    if (!channel) return;
+
+                    const message =
+                      (channel?.get && channel.get(messageId)) ||
+                      (channel?.getMessage && channel.getMessage(messageId)) ||
+                      (channel?._array && channel._array.find((m) => m?.id === messageId)) ||
+                      (Array.isArray(channel) && channel.find((m) => m?.id === messageId));
+                    if (!message || message.state === "SEND_FAILED") return;
+                    if (message.author && (message.author.id === "1" || message.author.id === 1)) return;
 
                     // If current user is deleting their own message, allow normal deletion without error
-                    const currentUserId = UserStore?.getCurrentUser?.()?.id;
+                    let currentUserId = null;
+                    try {
+                      currentUserId = UserStore?.getCurrentUser?.()?.id;
+                    } catch (_) {}
                     if (currentUserId && message.author?.id === currentUserId) return;
 
-                    const raw = typeof message.toJS === "function" ? message.toJS() : { ...message };
+                    let raw;
+                    try {
+                      raw = typeof message.toJS === "function" ? message.toJS() : { ...message };
+                    } catch (_) {
+                      raw = { ...message };
+                    }
+
+                    // Ensure mandatory fields exist so Discord renderers never crash
+                    raw.id = messageId;
+                    raw.channel_id = channelId;
+                    if (!raw.author && message.author) raw.author = message.author;
+                    if (!raw.content && message.content) raw.content = message.content;
+                    raw.__qol_deleted = true;
+
                     return [
                       {
                         type: "MESSAGE_UPDATE",
@@ -2204,7 +2206,8 @@ const code = `(function (v) {
                         },
                       },
                     ];
-                  } catch (_) {
+                  } catch (e) {
+                    console.warn("[QoL-AIO] Error intercepting MESSAGE_DELETE:", e);
                     return;
                   }
                 }
@@ -2213,8 +2216,13 @@ const code = `(function (v) {
                 if (event.type === "MESSAGE_UPDATE" && event.message && event.message.content) {
                   try {
                     const channelId = event.message.channel_id || event.message.channelId;
-                    const channel = ChannelMessages?._channelMessages?.[channelId] || (ChannelMessages?.get && ChannelMessages.get(channelId));
-                    const existing = channel?.get ? channel.get(event.message.id) : channel?._array?.find((m) => m.id === event.message.id);
+                    const channel =
+                      (ChannelMessages?.get && ChannelMessages.get(channelId)) ||
+                      (ChannelMessages?.getMessages && ChannelMessages.getMessages(channelId)) ||
+                      ChannelMessages?._channelMessages?.[channelId];
+                    const existing =
+                      (channel?.get && channel.get(event.message.id)) ||
+                      (channel?._array && channel._array.find((m) => m?.id === event.message.id));
 
                     if (existing && existing.content && existing.content !== event.message.content && !event.message.__qol_edit_applied) {
                       let history = existing.__qol_edits;
@@ -2229,16 +2237,17 @@ const code = `(function (v) {
                       }
                       existing.__qol_edits = history;
 
+                      const nl = String.fromCharCode(10);
                       // Stack all edit versions with previous versions struck through
                       const stacked = history
                         .map((ver, idx) => {
                           if (idx === history.length - 1) return ver;
                           return ver
-                            .split("\\n")
-                            .map((line) => (line.startsWith("~~") && line.endsWith("~~") ? line : \`~~\${line}~~\`))
-                            .join("\\n");
+                            .split(nl)
+                            .map((line) => (line.startsWith("~~") && line.endsWith("~~") ? line : "~~" + line + "~~"))
+                            .join(nl);
                         })
-                        .join("\\n");
+                        .join(nl);
 
                       event.message.content = stacked;
                       event.message.__qol_edits = history;
@@ -2254,8 +2263,10 @@ const code = `(function (v) {
             unpatches.push(
               instead("updateMessageRecord", MessageRecordUtils, function ([oldRecord, newProps], orig) {
                 try {
-                  if (newProps && newProps.__qol_deleted && MessageRecordUtils.createMessageRecord) {
-                    return MessageRecordUtils.createMessageRecord(newProps, oldRecord ? oldRecord.reactions : undefined);
+                  if (newProps && (newProps.__qol_deleted || newProps.__vml_deleted) && MessageRecordUtils.createMessageRecord) {
+                    const rec = MessageRecordUtils.createMessageRecord(newProps, oldRecord ? oldRecord.reactions : undefined);
+                    if (rec) rec.__qol_deleted = true;
+                    return rec;
                   }
                 } catch (_) {}
                 return orig.apply(this, [oldRecord, newProps]);
@@ -2266,18 +2277,19 @@ const code = `(function (v) {
           if (MessageRecordUtils && MessageRecordUtils.createMessageRecord && after) {
             unpatches.push(
               after("createMessageRecord", MessageRecordUtils, function ([message], record) {
-                if (message && record) {
-                  record.__qol_deleted = message.__qol_deleted;
+                if (message && record && (message.__qol_deleted || message.__vml_deleted)) {
+                  record.__qol_deleted = true;
                 }
               })
             );
           }
 
-          if (MessageRecord && MessageRecord.default && after) {
+          if (MessageRecord && after) {
+            const target = MessageRecord.default ? MessageRecord : { default: MessageRecord };
             unpatches.push(
-              after("default", MessageRecord, ([props], record) => {
-                if (props && record) {
-                  record.__qol_deleted = !!props.__qol_deleted;
+              after("default", target, ([props], record) => {
+                if (props && record && (props.__qol_deleted || props.__vml_deleted)) {
+                  record.__qol_deleted = true;
                 }
               })
             );
@@ -2288,8 +2300,9 @@ const code = `(function (v) {
               after("generate", RowManager.prototype, ([data], row) => {
                 if (!row || !data || data.rowType !== 1) return;
 
-                if (storage.messageLogger && data.message && data.message.__qol_deleted) {
+                if (storage.messageLogger && (data.message?.__qol_deleted || row.message?.__qol_deleted)) {
                   row.message.edited = "deleted";
+                  row.message.__qol_deleted = true;
                   row.backgroundHighlight = row.backgroundHighlight || {};
                   row.backgroundHighlight.backgroundColor = RN.processColor ? RN.processColor("#da373c22") : "#da373c22";
                   row.backgroundHighlight.gutterColor = RN.processColor ? RN.processColor("#da373cff") : "#da373cff";
@@ -2388,9 +2401,9 @@ const manifest = {
     }
   ],
   main: "index.js",
-  version: "1.5.0",
+  version: "1.5.1",
   hash: sha256
 };
 
 fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
-console.log("Built v1.5.0 successfully with hash:", sha256);
+console.log("Built v1.5.1 successfully with hash:", sha256);
