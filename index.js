@@ -15,6 +15,7 @@
     exactTimestamps: true,
     noCompression: true,
     mediaViewing: true,
+    storeButtons: true,
   };
 
   function getStorage() {
@@ -69,19 +70,16 @@
     const first = Array.isArray(args) ? args[0] : args;
     if (!first) return null;
 
-    // 1. Direct bannerSource URI
     if (first.bannerSource && typeof first.bannerSource.uri === "string") {
       return first.bannerSource.uri.replace(/(?:\?size=\d{3,4})?$/, "?size=4096").replace(".webp", ".png");
     }
 
-    // 2. User object with banner hash
     const user = first.user;
     if (user && user.banner) {
       const ext = user.banner.startsWith("a_") ? "gif" : "png";
       return `https://cdn.discordapp.com/banners/${user.id}/${user.banner}.${ext}?size=4096`;
     }
 
-    // 3. Guild-specific member banner
     if (first.guildMember && first.guildMember.banner && first.guildId && user) {
       const ext = first.guildMember.banner.startsWith("a_") ? "gif" : "png";
       return `https://cdn.discordapp.com/guilds/${first.guildId}/users/${user.id}/banners/${first.guildMember.banner}.${ext}?size=4096`;
@@ -112,13 +110,362 @@
     }
   }
 
+  // Helper: Install Plugin into Revenge/Vendetta
+  async function installPluginItem(installUrl, name) {
+    try {
+      const pm = vendetta.plugins || (vendetta.metro && vendetta.metro.findByProps("installPlugin"));
+      if (pm && typeof pm.installPlugin === "function") {
+        await pm.installPlugin(installUrl);
+        if (vendetta.ui && vendetta.ui.toasts && vendetta.ui.toasts.showToast) {
+          vendetta.ui.toasts.showToast(`Installed ${name}!`);
+        }
+        return true;
+      }
+    } catch (err) {
+      if (vendetta.ui && vendetta.ui.toasts && vendetta.ui.toasts.showToast) {
+        vendetta.ui.toasts.showToast(`Install failed: ${err?.message || err}`);
+      }
+    }
+    return false;
+  }
+
+  // Helper: Install Theme into Revenge/Vendetta
+  async function installThemeItem(installUrl, name) {
+    try {
+      const tm = vendetta.themes || (vendetta.metro && vendetta.metro.findByProps("installTheme"));
+      if (tm && typeof tm.installTheme === "function") {
+        await tm.installTheme(installUrl);
+        if (vendetta.ui && vendetta.ui.toasts && vendetta.ui.toasts.showToast) {
+          vendetta.ui.toasts.showToast(`Installed ${name}! Apply in Themes.`);
+        }
+        return true;
+      }
+    } catch (err) {
+      if (vendetta.ui && vendetta.ui.toasts && vendetta.ui.toasts.showToast) {
+        vendetta.ui.toasts.showToast(`Theme install failed: ${err?.message || err}`);
+      }
+    }
+    return false;
+  }
+
+  // =========================================================================
+  // PLUGIN STORE SCREEN
+  // =========================================================================
+  function PluginStoreScreen() {
+    const React = (vendetta && vendetta.metro && vendetta.metro.common && vendetta.metro.common.React) || window.React;
+    const RN = (vendetta && vendetta.metro && vendetta.metro.common && vendetta.metro.common.ReactNative) || {};
+    const { ScrollView, View, Text, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet } = RN;
+
+    const [plugins, setPlugins] = React.useState([]);
+    const [loading, setLoading] = React.useState(true);
+    const [search, setSearch] = React.useState("");
+    const [filter, setFilter] = React.useState("all"); // 'all' | 'working' | 'warning' | 'broken'
+    const [installedMap, setInstalledMap] = React.useState({});
+
+    React.useEffect(() => {
+      fetch("https://raw.githubusercontent.com/Purple-EyeZ/Plugins-List/main/src/plugins-data.json")
+        .then((r) => r.json())
+        .then((data) => {
+          setPlugins(Array.isArray(data) ? data : []);
+          setLoading(false);
+        })
+        .catch(() => setLoading(false));
+    }, []);
+
+    const filtered = plugins.filter((p) => {
+      const matchesSearch =
+        (p.name && p.name.toLowerCase().includes(search.toLowerCase())) ||
+        (p.description && p.description.toLowerCase().includes(search.toLowerCase())) ||
+        (Array.isArray(p.authors) && p.authors.some((a) => a.toLowerCase().includes(search.toLowerCase())));
+      const matchesStatus = filter === "all" || p.status === filter;
+      return matchesSearch && matchesStatus;
+    });
+
+    const styles = StyleSheet.create({
+      container: { flex: 1, backgroundColor: "#1e1f22", padding: 12 },
+      title: { fontSize: 22, fontWeight: "bold", color: "#ffffff", marginBottom: 4 },
+      subtitle: { fontSize: 13, color: "#949ba4", marginBottom: 12 },
+      searchBar: { backgroundColor: "#2b2d31", color: "#ffffff", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, fontSize: 15, marginBottom: 10 },
+      filterRow: { flexDirection: "row", gap: 6, marginBottom: 14 },
+      filterPill: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, backgroundColor: "#2b2d31" },
+      filterPillActive: { backgroundColor: "#5865f2" },
+      filterPillText: { color: "#949ba4", fontSize: 13, fontWeight: "600" },
+      filterPillTextActive: { color: "#ffffff" },
+      card: { backgroundColor: "#2b2d31", borderRadius: 10, padding: 12, marginBottom: 12 },
+      cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
+      cardTitle: { fontSize: 17, fontWeight: "bold", color: "#ffffff", flex: 1 },
+      badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+      badgeText: { fontSize: 11, fontWeight: "bold" },
+      cardAuthor: { fontSize: 12, color: "#949ba4", marginBottom: 6 },
+      cardDesc: { fontSize: 14, color: "#dbdee1", lineHeight: 18, marginBottom: 10 },
+      warningBox: { backgroundColor: "#f0b23222", padding: 8, borderRadius: 6, borderLeftWidth: 3, borderLeftColor: "#f0b232", marginBottom: 8 },
+      warningText: { color: "#f0b232", fontSize: 12 },
+      btnRow: { flexDirection: "row", gap: 8, marginTop: 4 },
+      btnInstall: { backgroundColor: "#5865f2", paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6, alignItems: "center" },
+      btnInstallDone: { backgroundColor: "#23a55a" },
+      btnInstallText: { color: "#ffffff", fontWeight: "600", fontSize: 13 },
+      btnSecondary: { backgroundColor: "#35373c", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, alignItems: "center" },
+      btnSecondaryText: { color: "#dbdee1", fontSize: 13 },
+    });
+
+    function getStatusBadge(status) {
+      if (status === "working") {
+        return React.createElement(View, { style: [styles.badge, { backgroundColor: "#23a55a22" }] },
+          React.createElement(Text, { style: [styles.badgeText, { color: "#23a55a" }] }, "🟢 Working")
+        );
+      }
+      if (status === "warning") {
+        return React.createElement(View, { style: [styles.badge, { backgroundColor: "#f0b23222" }] },
+          React.createElement(Text, { style: [styles.badgeText, { color: "#f0b232" }] }, "🟡 Warning")
+        );
+      }
+      return React.createElement(View, { style: [styles.badge, { backgroundColor: "#f23f4322" }] },
+        React.createElement(Text, { style: [styles.badgeText, { color: "#f23f43" }] }, "🔴 Broken")
+      );
+    }
+
+    return React.createElement(
+      ScrollView,
+      { style: styles.container },
+      React.createElement(Text, { style: styles.title }, "Plugin Store"),
+      React.createElement(Text, { style: styles.subtitle }, `${plugins.length} Revenge & Vendetta plugins available`),
+      React.createElement(TextInput, {
+        style: styles.searchBar,
+        placeholder: "Search plugins, authors, descriptions...",
+        placeholderTextColor: "#949ba4",
+        value: search,
+        onChangeText: setSearch,
+      }),
+      React.createElement(
+        View,
+        { style: styles.filterRow },
+        ["all", "working", "warning", "broken"].map((f) =>
+          React.createElement(
+            TouchableOpacity,
+            {
+              key: f,
+              onPress: () => setFilter(f),
+              style: [styles.filterPill, filter === f && styles.filterPillActive],
+            },
+            React.createElement(
+              Text,
+              { style: [styles.filterPillText, filter === f && styles.filterPillTextActive] },
+              f.charAt(0).toUpperCase() + f.slice(1)
+            )
+          )
+        )
+      ),
+      loading
+        ? React.createElement(ActivityIndicator, { size: "large", color: "#5865f2", style: { marginTop: 30 } })
+        : filtered.map((plugin) =>
+            React.createElement(
+              View,
+              { key: plugin.name + plugin.installUrl, style: styles.card },
+              React.createElement(
+                View,
+                { style: styles.cardHeader },
+                React.createElement(Text, { style: styles.cardTitle }, plugin.name),
+                getStatusBadge(plugin.status)
+              ),
+              React.createElement(Text, { style: styles.cardAuthor }, `by ${Array.isArray(plugin.authors) ? plugin.authors.join(", ") : plugin.authors || "Unknown"}`),
+              React.createElement(Text, { style: styles.cardDesc }, plugin.description),
+              plugin.warningMessage
+                ? React.createElement(View, { style: styles.warningBox }, React.createElement(Text, { style: styles.warningText }, `⚠️ ${plugin.warningMessage}`))
+                : null,
+              React.createElement(
+                View,
+                { style: styles.btnRow },
+                React.createElement(
+                  TouchableOpacity,
+                  {
+                    style: [styles.btnInstall, installedMap[plugin.installUrl] && styles.btnInstallDone],
+                    onPress: async () => {
+                      const success = await installPluginItem(plugin.installUrl, plugin.name);
+                      if (success) {
+                        setInstalledMap((prev) => ({ ...prev, [plugin.installUrl]: true }));
+                      }
+                    },
+                  },
+                  React.createElement(Text, { style: styles.btnInstallText }, installedMap[plugin.installUrl] ? "✓ Installed" : "Install Plugin")
+                ),
+                plugin.sourceUrl
+                  ? React.createElement(
+                      TouchableOpacity,
+                      {
+                        style: styles.btnSecondary,
+                        onPress: () => {
+                          const Linking = RN.Linking || (vendetta.metro && vendetta.metro.findByProps("openURL"));
+                          if (Linking && Linking.openURL) Linking.openURL(plugin.sourceUrl);
+                        },
+                      },
+                      React.createElement(Text, { style: styles.btnSecondaryText }, "Source")
+                    )
+                  : null,
+                React.createElement(
+                  TouchableOpacity,
+                  {
+                    style: styles.btnSecondary,
+                    onPress: () => {
+                      if (RN.Clipboard && RN.Clipboard.setString) {
+                        RN.Clipboard.setString(plugin.installUrl);
+                        if (vendetta.ui?.toasts?.showToast) vendetta.ui.toasts.showToast("Link copied to clipboard!");
+                      }
+                    },
+                  },
+                  React.createElement(Text, { style: styles.btnSecondaryText }, "Copy Link")
+                )
+              )
+            )
+          )
+    );
+  }
+
+  // =========================================================================
+  // THEME STORE SCREEN
+  // =========================================================================
+  function ThemeStoreScreen() {
+    const React = (vendetta && vendetta.metro && vendetta.metro.common && vendetta.metro.common.React) || window.React;
+    const RN = (vendetta && vendetta.metro && vendetta.metro.common && vendetta.metro.common.ReactNative) || {};
+    const { ScrollView, View, Text, TextInput, TouchableOpacity, Image, ActivityIndicator, StyleSheet } = RN;
+
+    const [themes, setThemes] = React.useState([]);
+    const [loading, setLoading] = React.useState(true);
+    const [search, setSearch] = React.useState("");
+    const [installedMap, setInstalledMap] = React.useState({});
+
+    React.useEffect(() => {
+      fetch("https://raw.githubusercontent.com/Purple-EyeZ/Plugins-List/main/src/themes-data.json")
+        .then((r) => r.json())
+        .then((data) => {
+          setThemes(Array.isArray(data) ? data : []);
+          setLoading(false);
+        })
+        .catch(() => setLoading(false));
+    }, []);
+
+    const filtered = themes.filter((t) => {
+      return (
+        (t.name && t.name.toLowerCase().includes(search.toLowerCase())) ||
+        (t.description && t.description.toLowerCase().includes(search.toLowerCase())) ||
+        (Array.isArray(t.authors) && t.authors.some((a) => a.toLowerCase().includes(search.toLowerCase()))) ||
+        (Array.isArray(t.tags) && t.tags.some((tag) => tag.toLowerCase().includes(search.toLowerCase())))
+      );
+    });
+
+    const styles = StyleSheet.create({
+      container: { flex: 1, backgroundColor: "#1e1f22", padding: 12 },
+      title: { fontSize: 22, fontWeight: "bold", color: "#ffffff", marginBottom: 4 },
+      subtitle: { fontSize: 13, color: "#949ba4", marginBottom: 12 },
+      searchBar: { backgroundColor: "#2b2d31", color: "#ffffff", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, fontSize: 15, marginBottom: 12 },
+      card: { backgroundColor: "#2b2d31", borderRadius: 10, padding: 12, marginBottom: 14 },
+      cardTitle: { fontSize: 18, fontWeight: "bold", color: "#ffffff", marginBottom: 2 },
+      cardAuthor: { fontSize: 12, color: "#949ba4", marginBottom: 8 },
+      cardDesc: { fontSize: 14, color: "#dbdee1", lineHeight: 18, marginBottom: 10 },
+      tagsRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginBottom: 10 },
+      tag: { backgroundColor: "#35373c", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
+      tagText: { color: "#b5bac1", fontSize: 11 },
+      previewImage: { width: "100%", height: 160, borderRadius: 6, marginBottom: 10, backgroundColor: "#1e1f22" },
+      btnRow: { flexDirection: "row", gap: 8 },
+      btnInstall: { backgroundColor: "#5865f2", paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6, alignItems: "center" },
+      btnInstallDone: { backgroundColor: "#23a55a" },
+      btnInstallText: { color: "#ffffff", fontWeight: "600", fontSize: 13 },
+      btnSecondary: { backgroundColor: "#35373c", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, alignItems: "center" },
+      btnSecondaryText: { color: "#dbdee1", fontSize: 13 },
+    });
+
+    return React.createElement(
+      ScrollView,
+      { style: styles.container },
+      React.createElement(Text, { style: styles.title }, "Theme Store"),
+      React.createElement(Text, { style: styles.subtitle }, `${themes.length} Revenge & Vendetta themes available`),
+      React.createElement(TextInput, {
+        style: styles.searchBar,
+        placeholder: "Search themes, tags, authors...",
+        placeholderTextColor: "#949ba4",
+        value: search,
+        onChangeText: setSearch,
+      }),
+      loading
+        ? React.createElement(ActivityIndicator, { size: "large", color: "#5865f2", style: { marginTop: 30 } })
+        : filtered.map((theme) =>
+            React.createElement(
+              View,
+              { key: theme.name + theme.installUrl, style: styles.card },
+              React.createElement(Text, { style: styles.cardTitle }, theme.name),
+              React.createElement(Text, { style: styles.cardAuthor }, `by ${Array.isArray(theme.authors) ? theme.authors.join(", ") : theme.authors || "Unknown"}`),
+              Array.isArray(theme.tags) && theme.tags.length > 0
+                ? React.createElement(
+                    View,
+                    { style: styles.tagsRow },
+                    theme.tags.map((tag) =>
+                      React.createElement(View, { key: tag, style: styles.tag }, React.createElement(Text, { style: styles.tagText }, `#${tag}`))
+                    )
+                  )
+                : null,
+              React.createElement(Text, { style: styles.cardDesc }, theme.description),
+              Array.isArray(theme.images) && theme.images[0]
+                ? React.createElement(Image, {
+                    source: { uri: theme.images[0] },
+                    style: styles.previewImage,
+                    resizeMode: "cover",
+                  })
+                : null,
+              React.createElement(
+                View,
+                { style: styles.btnRow },
+                React.createElement(
+                  TouchableOpacity,
+                  {
+                    style: [styles.btnInstall, installedMap[theme.installUrl] && styles.btnInstallDone],
+                    onPress: async () => {
+                      const success = await installThemeItem(theme.installUrl, theme.name);
+                      if (success) {
+                        setInstalledMap((prev) => ({ ...prev, [theme.installUrl]: true }));
+                      }
+                    },
+                  },
+                  React.createElement(Text, { style: styles.btnInstallText }, installedMap[theme.installUrl] ? "✓ Installed" : "Install Theme")
+                ),
+                theme.sourceUrl
+                  ? React.createElement(
+                      TouchableOpacity,
+                      {
+                        style: styles.btnSecondary,
+                        onPress: () => {
+                          const Linking = RN.Linking || (vendetta.metro && vendetta.metro.findByProps("openURL"));
+                          if (Linking && Linking.openURL) Linking.openURL(theme.sourceUrl);
+                        },
+                      },
+                      React.createElement(Text, { style: styles.btnSecondaryText }, "Source")
+                    )
+                  : null,
+                React.createElement(
+                  TouchableOpacity,
+                  {
+                    style: styles.btnSecondary,
+                    onPress: () => {
+                      if (RN.Clipboard && RN.Clipboard.setString) {
+                        RN.Clipboard.setString(theme.installUrl);
+                        if (vendetta.ui?.toasts?.showToast) vendetta.ui.toasts.showToast("Link copied to clipboard!");
+                      }
+                    },
+                  },
+                  React.createElement(Text, { style: styles.btnSecondaryText }, "Copy Link")
+                )
+              )
+            )
+          )
+    );
+  }
+
   // The Custom Settings Component
   function SettingsScreen() {
     const React = (vendetta && vendetta.metro && vendetta.metro.common && vendetta.metro.common.React) || window.React;
     const RN = (vendetta && vendetta.metro && vendetta.metro.common && vendetta.metro.common.ReactNative) || {};
-    const { ScrollView, View, Text, Switch, StyleSheet } = RN;
+    const { ScrollView, View, Text, Switch, TouchableOpacity, StyleSheet } = RN;
     const storage = getStorage();
     const [, setTick] = React && React.useState ? React.useState(0) : [0, () => {}];
+    const [viewMode, setViewMode] = React.useState("settings"); // 'settings' | 'plugins' | 'themes'
 
     function toggle(key) {
       storage[key] = !storage[key];
@@ -132,11 +479,47 @@
       } catch (_) {}
     }
 
-    if (!React || !View) return null;
+    if (viewMode === "plugins") {
+      return React.createElement(
+        View,
+        { style: { flex: 1, backgroundColor: "#1e1f22" } },
+        React.createElement(
+          TouchableOpacity,
+          {
+            style: { padding: 12, backgroundColor: "#2b2d31", borderBottomWidth: 1, borderBottomColor: "#35373c" },
+            onPress: () => setViewMode("settings"),
+          },
+          React.createElement(Text, { style: { color: "#5865f2", fontWeight: "bold" } }, "← Back to QoL Settings")
+        ),
+        React.createElement(PluginStoreScreen)
+      );
+    }
+
+    if (viewMode === "themes") {
+      return React.createElement(
+        View,
+        { style: { flex: 1, backgroundColor: "#1e1f22" } },
+        React.createElement(
+          TouchableOpacity,
+          {
+            style: { padding: 12, backgroundColor: "#2b2d31", borderBottomWidth: 1, borderBottomColor: "#35373c" },
+            onPress: () => setViewMode("settings"),
+          },
+          React.createElement(Text, { style: { color: "#5865f2", fontWeight: "bold" } }, "← Back to QoL Settings")
+        ),
+        React.createElement(ThemeStoreScreen)
+      );
+    }
 
     const styles = StyleSheet.create({
       container: { flex: 1, padding: 16, backgroundColor: "#1e1f22" },
-      title: { fontSize: 20, fontWeight: "bold", color: "#ffffff", marginBottom: 16 },
+      title: { fontSize: 20, fontWeight: "bold", color: "#ffffff", marginBottom: 4 },
+      subtitle: { fontSize: 13, color: "#949ba4", marginBottom: 16 },
+      storeBtnGroup: { gap: 10, marginBottom: 20 },
+      storeBtn: { backgroundColor: "#5865f2", padding: 14, borderRadius: 8, alignItems: "center" },
+      storeBtnAlt: { backgroundColor: "#4752c4" },
+      storeBtnText: { color: "#ffffff", fontWeight: "bold", fontSize: 15 },
+      sectionHeader: { fontSize: 13, fontWeight: "bold", color: "#949ba4", textTransform: "uppercase", marginBottom: 8 },
       row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#2b2d31" },
       label: { fontSize: 16, color: "#ffffff" },
       desc: { fontSize: 12, color: "#949ba4", marginTop: 2 },
@@ -158,6 +541,22 @@
       ScrollView,
       { style: styles.container },
       React.createElement(Text, { style: styles.title }, "QoL All-in-One Settings"),
+      React.createElement(Text, { style: styles.subtitle }, "Configure features or browse the Revenge stores below"),
+      React.createElement(
+        View,
+        { style: styles.storeBtnGroup },
+        React.createElement(
+          TouchableOpacity,
+          { style: styles.storeBtn, onPress: () => setViewMode("plugins") },
+          React.createElement(Text, { style: styles.storeBtnText }, "📦 Open Plugin Store (166 Plugins)")
+        ),
+        React.createElement(
+          TouchableOpacity,
+          { style: [styles.storeBtn, styles.storeBtnAlt], onPress: () => setViewMode("themes") },
+          React.createElement(Text, { style: styles.storeBtnText }, "🎨 Open Theme Store (193 Themes)")
+        )
+      ),
+      React.createElement(Text, { style: styles.sectionHeader }, "Toggles & Tweaks"),
       options.map((opt) =>
         React.createElement(
           View,
@@ -214,6 +613,60 @@
           }
         } catch (_) {}
 
+        // =========================================================================
+        // 0. INJECT PLUGIN STORE & THEME STORE BUTTONS DIRECTLY BELOW FONTS
+        // =========================================================================
+        try {
+          const registeredSections = ui?.settings?.registeredSections;
+          if (registeredSections && typeof registeredSections === "object") {
+            const pluginStoreRow = {
+              key: "REVENGE_PLUGIN_STORE",
+              title: () => "Plugin Store",
+              render: () => Promise.resolve({ default: PluginStoreScreen }),
+              useTrailing: () => "Browse",
+            };
+            const themeStoreRow = {
+              key: "REVENGE_THEME_STORE",
+              title: () => "Theme Store",
+              render: () => Promise.resolve({ default: ThemeStoreScreen }),
+              useTrailing: () => "Browse",
+            };
+
+            for (const [sectionName, items] of Object.entries(registeredSections)) {
+              if (!Array.isArray(items)) continue;
+              const isTargetSection =
+                sectionName.toLowerCase().includes("bunny") ||
+                sectionName.toLowerCase().includes("revenge") ||
+                sectionName.toLowerCase().includes("vendetta") ||
+                items.some((i) => i.key && i.key.includes("FONTS"));
+
+              if (isTargetSection) {
+                // Find index of FONTS
+                const fontIdx = items.findIndex((i) => i.key && i.key.includes("FONTS"));
+                const insertIdx = fontIdx !== -1 ? fontIdx + 1 : items.length;
+
+                // Remove existing if any
+                const existingPIdx = items.findIndex((i) => i.key === "REVENGE_PLUGIN_STORE");
+                if (existingPIdx !== -1) items.splice(existingPIdx, 1);
+                const existingTIdx = items.findIndex((i) => i.key === "REVENGE_THEME_STORE");
+                if (existingTIdx !== -1) items.splice(existingTIdx, 1);
+
+                items.splice(insertIdx, 0, pluginStoreRow, themeStoreRow);
+
+                unpatches.push(() => {
+                  const pIdx = items.findIndex((i) => i.key === "REVENGE_PLUGIN_STORE");
+                  if (pIdx !== -1) items.splice(pIdx, 1);
+                  const tIdx = items.findIndex((i) => i.key === "REVENGE_THEME_STORE");
+                  if (tIdx !== -1) items.splice(tIdx, 1);
+                });
+              }
+            }
+            console.log("[QoL-AIO] Injected Plugin Store & Theme Store below Fonts.");
+          }
+        } catch (e) {
+          console.warn("[QoL-AIO] Error injecting settings rows:", e);
+        }
+
         // Helper: Download Media directly to Android Gallery
         const MediaManager = findByProps("downloadMediaAsset");
         function downloadMedia(url, label = "Media") {
@@ -254,7 +707,6 @@
           const GuildIcon = findByName("GuildIcon");
           const { Pressable } = findByProps("Button", "Text", "View") || {};
 
-          // HOLD DOWN USER PFP TO DOWNLOAD
           if (HeaderAvatar && after) {
             unpatches.push(
               after("default", HeaderAvatar, ([args], res) => {
@@ -273,7 +725,6 @@
             );
           }
 
-          // HOLD DOWN BANNER TO DOWNLOAD (Wraps in a full-width Pressable)
           const bannerComponents = [
             findByName("ProfileBanner", false),
             findByName("UserBanner", false),
@@ -311,7 +762,6 @@
             );
           });
 
-          // SERVER ICON DOWNLOAD: Tap server icon in large view to download
           if (GuildIcon && GuildIcon.prototype && after && Pressable && React) {
             unpatches.push(
               after("render", GuildIcon.prototype, function (_, res) {
