@@ -351,34 +351,50 @@ const code = `(function (v) {
         }
       }
 
-      const state = getCachedPresenceState();
-      if (state && state.clientStatuses && state.clientStatuses[userId]) {
-        return state.clientStatuses[userId];
-      }
-
-      // Check PresenceStore directly
+      // Check PresenceStore
       const PresenceStore =
         (metro?.findByStoreName && metro.findByStoreName("PresenceStore")) ||
-        (metro?.findByProps && metro.findByProps("getState"));
+        (metro?.findByProps && metro.findByProps("getState", "getStatus"));
 
+      const state = PresenceStore?.getState ? PresenceStore.getState() : getCachedPresenceState();
+
+      let clientStatuses = null;
       if (PresenceStore?.getClientStatuses) {
-        const cs = PresenceStore.getClientStatuses(userId);
-        if (cs && typeof cs === "object" && Object.keys(cs).length > 0) return cs;
+        clientStatuses = PresenceStore.getClientStatuses(userId);
+      }
+      if (!clientStatuses && state?.clientStatuses?.[userId]) {
+        clientStatuses = state.clientStatuses[userId];
       }
 
-      if (PresenceStore?.getState) {
-        const liveState = PresenceStore.getState();
-        if (liveState?.clientStatuses?.[userId]) return liveState.clientStatuses[userId];
+      const res = {};
+      if (clientStatuses && typeof clientStatuses === "object") {
+        Object.keys(clientStatuses).forEach((k) => {
+          if (clientStatuses[k] && clientStatuses[k] !== "offline") {
+            res[k] = clientStatuses[k];
+          }
+        });
       }
 
-      // Fallback: check status directly from presence store
-      if (PresenceStore?.getStatus) {
-        const st = PresenceStore.getStatus(userId);
-        if (st && st !== "offline") {
-          return { desktop: st };
+      const userStatus = PresenceStore?.getStatus ? PresenceStore.getStatus(userId) : state?.statuses?.[userId];
+      const isMobile =
+        (typeof PresenceStore?.isMobileOnline === "function" && PresenceStore.isMobileOnline(userId)) ||
+        (state?.mobileOnlineUsers && (state.mobileOnlineUsers[userId] || (typeof state.mobileOnlineUsers.has === "function" && state.mobileOnlineUsers.has(userId)))) ||
+        (state?.mobileStatuses && state.mobileStatuses[userId]);
+
+      if (isMobile && userStatus && userStatus !== "offline") {
+        res.mobile = userStatus;
+      }
+
+      // Fallback: if user is active (online, idle, dnd) but no specific platform was listed in clientStatuses
+      if (Object.keys(res).length === 0 && userStatus && userStatus !== "offline") {
+        if (isMobile) {
+          res.mobile = userStatus;
+        } else {
+          res.desktop = userStatus;
         }
       }
-      return null;
+
+      return Object.keys(res).length > 0 ? res : null;
     } catch (_) {
       return null;
     }
@@ -1124,30 +1140,32 @@ const code = `(function (v) {
           const CloudUploadModule = findByProps("CloudUpload");
           const CloudUpload = CloudUploadModule?.CloudUpload || CloudUploadModule?.default || CloudUploadModule;
 
-          if (CloudUpload && CloudUpload.prototype && instead) {
+          if (CloudUpload && CloudUpload.prototype && after) {
             unpatches.push(
-              instead("reactNativeCompressAndExtractData", CloudUpload.prototype, function (args) {
-                if (!storage.noCompression) {
-                  return CloudUpload.prototype.reactNativeCompressAndExtractData.apply(this, args);
-                }
-                const media = args[0];
-                return new Promise((resolve) => {
-                  media.reactNativeFilePrepped = true;
-                  if (media.preCompressionSize) {
-                    media.currentSize = media.preCompressionSize;
-                    media.postCompressionSize = media.preCompressionSize;
-                  } else {
-                    media.postCompressionSize = 1000;
-                    media.preCompressionSize = 1000;
-                    media.currentSize = 1000;
-                  }
+              after("reactNativeCompressAndExtractData", CloudUpload.prototype, function (args, res) {
+                if (!storage.noCompression) return res;
+                const media = this;
+                if (!media) return res;
 
-                  if (media.mimeType === "image/png" && !media.filename.toLowerCase().endsWith(".png")) {
-                    media.filename = media.filename + ".png";
-                  }
-                  if (media.mimeType === "image/jpg" && !(media.filename.toLowerCase().endsWith(".jpg") || media.filename.toLowerCase().endsWith(".jpeg"))) {
-                    media.filename = media.filename + ".jpg";
-                  }
+                return new Promise((resolve) => {
+                  try {
+                    media.reactNativeFilePrepped = true;
+                    if (media.preCompressionSize) {
+                      media.currentSize = media.preCompressionSize;
+                      media.postCompressionSize = media.preCompressionSize;
+                    } else {
+                      media.postCompressionSize = 1000;
+                      media.preCompressionSize = 1000;
+                      media.currentSize = 1000;
+                    }
+
+                    if (media.mimeType === "image/png" && typeof media.filename === "string" && !media.filename.toLowerCase().endsWith(".png")) {
+                      media.filename = media.filename + ".png";
+                    }
+                    if (media.mimeType === "image/jpg" && typeof media.filename === "string" && !(media.filename.toLowerCase().endsWith(".jpg") || media.filename.toLowerCase().endsWith(".jpeg"))) {
+                      media.filename = media.filename + ".jpg";
+                    }
+                  } catch (_) {}
                   resolve(media);
                 });
               })
@@ -1432,33 +1450,55 @@ const code = `(function (v) {
             let patched = false;
             function doPatch(ns) {
               if (patched || !ns) return;
-              const target = ns?.default ?? ns;
-              const isMemo = target !== null && typeof target === "object" && typeof target.type === "function";
-              const owner = isMemo ? target : ns;
-              const key = isMemo ? "type" : "default";
+              if (ns.default) {
+                const target = ns.default;
+                if (typeof target === "function") {
+                  patched = true;
+                  if (beforeFn && before) unpatches.push(before("default", ns, beforeFn));
+                  if (afterFn && after) unpatches.push(after("default", ns, afterFn));
+                  console.log(\`[QoL-AIO] PlatformIndicators hooked \${importedPath || "module"} on default\`);
+                  return;
+                }
+                if (target && typeof target === "object" && typeof target.type === "function") {
+                  patched = true;
+                  if (beforeFn && before) unpatches.push(before("type", target, beforeFn));
+                  if (afterFn && after) unpatches.push(after("type", target, afterFn));
+                  console.log(\`[QoL-AIO] PlatformIndicators hooked \${importedPath || "module"} on type\`);
+                  return;
+                }
+              }
 
-              if (owner && typeof owner[key] === "function") {
+              if (typeof ns === "object" && typeof ns.type === "function") {
                 patched = true;
-                if (beforeFn && before) {
-                  unpatches.push(before(key, owner, beforeFn));
-                }
-                if (afterFn && after) {
-                  unpatches.push(after(key, owner, afterFn));
-                }
-                console.log(\`[QoL-AIO] PlatformIndicators hooked \${importedPath || "module"} on \${key}\`);
-              } else if (typeof ns === "object" && ns !== null) {
-                for (const k of Object.keys(ns)) {
-                  const exportItem = ns[k];
-                  if (exportItem && typeof exportItem === "object" && typeof exportItem.type === "function") {
+                if (beforeFn && before) unpatches.push(before("type", ns, beforeFn));
+                if (afterFn && after) unpatches.push(after("type", ns, afterFn));
+                console.log(\`[QoL-AIO] PlatformIndicators hooked \${importedPath || "module"} on type\`);
+                return;
+              }
+
+              const candidates = [
+                "UsernameWithEffects",
+                "UserRow",
+                "GuildMemberRow",
+                "MessagesItemChannelContent",
+                "MessagesItemChannel",
+                "MessagesItemChannelFast",
+                "MessagesItemChannelFlash",
+                "MessagesItemChannelLegend",
+              ];
+              for (const name of candidates) {
+                if (ns[name]) {
+                  const comp = ns[name];
+                  if (typeof comp === "function") {
                     patched = true;
-                    if (beforeFn && before) unpatches.push(before("type", exportItem, beforeFn));
-                    if (afterFn && after) unpatches.push(after("type", exportItem, afterFn));
-                    console.log(\`[QoL-AIO] PlatformIndicators hooked \${importedPath || "module"} member \${k} on type\`);
-                  } else if (typeof exportItem === "function" && k !== "default") {
+                    if (beforeFn && before) unpatches.push(before(name, ns, beforeFn));
+                    if (afterFn && after) unpatches.push(after(name, ns, afterFn));
+                    console.log(\`[QoL-AIO] PlatformIndicators hooked \${importedPath || "module"} member \${name}\`);
+                  } else if (comp && typeof comp === "object" && typeof comp.type === "function") {
                     patched = true;
-                    if (beforeFn && before) unpatches.push(before(k, ns, beforeFn));
-                    if (afterFn && after) unpatches.push(after(k, ns, afterFn));
-                    console.log(\`[QoL-AIO] PlatformIndicators hooked \${importedPath || "module"} member \${k}\`);
+                    if (beforeFn && before) unpatches.push(before("type", comp, beforeFn));
+                    if (afterFn && after) unpatches.push(after("type", comp, afterFn));
+                    console.log(\`[QoL-AIO] PlatformIndicators hooked \${importedPath || "module"} member \${name} on type\`);
                   }
                 }
               }
@@ -1481,19 +1521,16 @@ const code = `(function (v) {
           // A. Hook UsernameWithEffects (all usernames in chat, DMs, headers, profiles)
           hookModule(
             "modules/display_name_styles/native/UsernameWithEffects.tsx",
-            () => findByProps("AVERAGE_FONT_WIDTH_RATIO"),
-            (args) => {
-              if (args && args[0] && args[0].userId) {
-                if (!args[0].style) args[0].style = {};
-                args[0].style.__platformindicators_userId = args[0].userId;
-              }
-              return args;
+            () => {
+              const mod = findByProps("AVERAGE_FONT_WIDTH_RATIO");
+              return mod?.default || mod?.UsernameWithEffects || mod;
             },
+            null,
             (args, res) => {
               if (!storage.platformIndicators || !res) return res;
-              const userId = args?.[0]?.userId || res?.props?.style?.__platformindicators_userId;
+              const userId = args?.[0]?.userId;
               if (!userId) return res;
-              if (findInReactTree(res, (c) => c?.key === "QoLPlatformIconsWrap")) return res;
+              if (findInReactTree(res, (c) => c?.key === "QoLPlatformIconsWrap" || c?.key === "QoLPI")) return res;
 
               return React.createElement(
                 RN.View,
@@ -1521,9 +1558,22 @@ const code = `(function (v) {
             null,
             (args, res) => {
               if (!storage.platformIndicators || !res) return res;
+              // Check if indicators were already added to this row
+              if (
+                findInReactTree(
+                  res,
+                  (c) =>
+                    c?.key === "QoLPlatformIconsWrap" ||
+                    c?.key === "QoLPI" ||
+                    c?.key === "QoLPlatformIconsUserRow" ||
+                    c?.key === "QoLPI_TV2"
+                )
+              ) {
+                return res;
+              }
+
               const userId = args?.[0]?.user?.id || findInReactTree(res, (m) => m?.props?.userId)?.props?.userId;
               if (!userId) return res;
-              if (findInReactTree(res, (c) => c?.key === "QoLPlatformIconsUserRow")) return res;
 
               const nameContainer = findInReactTree(
                 res,
@@ -1569,7 +1619,18 @@ const code = `(function (v) {
                 unpatches.push(
                   after("type", UserRow, ([{ user }], res) => {
                     if (!storage.platformIndicators || !user || !res || !res.props) return res;
-                    if (findInReactTree(res.props.label, (c) => c?.key === "QoLPI_TV2")) return res;
+                    if (
+                      findInReactTree(
+                        res,
+                        (c) =>
+                          c?.key === "QoLPlatformIconsWrap" ||
+                          c?.key === "QoLPI" ||
+                          c?.key === "QoLPlatformIconsUserRow" ||
+                          c?.key === "QoLPI_TV2"
+                      )
+                    ) {
+                      return res;
+                    }
                     res.props.label = React.createElement(
                       RN.View,
                       {
@@ -1825,7 +1886,7 @@ const code = `(function (v) {
             patchDMChannelRow
           );
 
-          // 3. Fallback: Hook Pressable for Tabs v2 DM list rows
+          // 3. Hook Pressable for Tabs v2 DM list rows
           try {
             const PressableModule =
               (metro?.findByDisplayName && metro.findByDisplayName("Pressable", false)) || findByProps("Pressable");
@@ -1845,36 +1906,102 @@ const code = `(function (v) {
                     if (!storage.platformIndicators || !args || !args[0]) return;
                     const props = args[0];
                     if (props?.accessibilityRole !== "button") return;
+                    if (findInReactTree(props, (m) => m?.key === "QoLPlatformIconsDM" || m?.key === "DMTabsV2DMList-v2")) return;
 
                     try {
+                      // Verify this is a 1-on-1 DM channel row
+                      const userNode = findInReactTree(props, (m) => m?.props?.user?.id && !m?.props?.guildId);
+                      const userId = userNode?.props?.user?.id;
+                      if (!userId) return;
+
+                      const isGuild = findInReactTree(props, (m) => m?.props?.guildId || m?.props?.channel?.guild_id);
+                      if (isGuild) return;
+
+                      // Strategy A: MSMA rowChildren path
                       const root = props?.children?.props?.children;
-                      if (!root) return;
-
-                      const child0Type = root?.props?.children?.[0]?.type?.type?.name;
-                      const isChannelRow =
-                        child0Type === "GuildContainerIndicator" ||
-                        child0Type === "ChannelUnreadBadge" ||
-                        !root?.props?.children?.[1]?.props?.children?.[0]?.props?.children?.props?.guildId;
-
-                      const userId =
-                        root?.props?.children?.[1]?.props?.children?.[0]?.props?.children?.props?.user?.id ||
-                        findInReactTree(props, (m) => m?.props?.user?.id)?.props?.user?.id;
-
-                      if (!userId || !isChannelRow) return;
-
-                      const nameArea = root?.props?.children?.[2]?.props?.children?.[0];
-                      if (nameArea && nameArea.props && Array.isArray(nameArea.props.children)) {
-                        const firstChild = nameArea.props.children[0];
-                        if (firstChild && firstChild.props && Array.isArray(firstChild.props.children)) {
-                          if (!findInReactTree(firstChild.props.children, (c) => c?.key === "QoLPlatformIconsDM")) {
-                            firstChild.props.children.push(
+                      const rowChildren = root?.props?.children;
+                      if (Array.isArray(rowChildren) && rowChildren.length >= 2) {
+                        const nameArea = rowChildren[2]?.props?.children?.[0];
+                        if (nameArea && nameArea.props && Array.isArray(nameArea.props.children)) {
+                          if (!findInReactTree(nameArea.props.children, (c) => c?.key === "QoLPlatformIconsDM")) {
+                            nameArea.props.children.splice(
+                              1,
+                              0,
                               React.createElement(PresenceUpdatedContainer, {
                                 key: "QoLPlatformIconsDM",
                                 userId: userId,
                                 size: 14,
                               })
                             );
+                            return;
                           }
+                        }
+                      }
+
+                      // Strategy B: Name container search
+                      const nameContainer = findInReactTree(
+                        props,
+                        (m) =>
+                          m?.props?.children &&
+                          (Array.isArray(m.props.children)
+                            ? m.props.children.some(
+                                (c) =>
+                                  c?.props?.ellipsizeMode ||
+                                  (typeof c?.props?.variant === "string" &&
+                                    (c.props.variant.includes("channel-title") || c.props.variant.includes("semibold")))
+                              )
+                            : m.props.children?.props?.ellipsizeMode ||
+                              (typeof m.props.children?.props?.variant === "string" &&
+                                (m.props.children.props.variant.includes("channel-title") ||
+                                  m.props.children.props.variant.includes("semibold"))))
+                      );
+
+                      if (nameContainer && Array.isArray(nameContainer.props.children)) {
+                        const titleIdx = nameContainer.props.children.findIndex(
+                          (c) =>
+                            c?.props?.ellipsizeMode ||
+                            (typeof c?.props?.variant === "string" &&
+                              (c.props.variant.includes("channel-title") || c.props.variant.includes("semibold")))
+                        );
+                        const insertIdx = titleIdx !== -1 ? titleIdx + 1 : nameContainer.props.children.length;
+                        nameContainer.props.children.splice(
+                          insertIdx,
+                          0,
+                          React.createElement(PresenceUpdatedContainer, {
+                            key: "QoLPlatformIconsDM",
+                            userId: userId,
+                            size: 14,
+                          })
+                        );
+                        return;
+                      }
+
+                      // Strategy C: Target title Text element directly
+                      const titleText = findInReactTree(
+                        props,
+                        (m) =>
+                          m?.props?.variant === "redesign/channel-title/semibold" ||
+                          (typeof m?.props?.variant === "string" && m.props.variant.includes("channel-title")) ||
+                          (m?.props?.ellipsizeMode && m?.props?.numberOfLines === 1)
+                      );
+                      if (titleText && titleText.props) {
+                        if (Array.isArray(titleText.props.children)) {
+                          titleText.props.children.push(
+                            React.createElement(PresenceUpdatedContainer, {
+                              key: "QoLPlatformIconsDM",
+                              userId: userId,
+                              size: 14,
+                            })
+                          );
+                        } else if (titleText.props.children) {
+                          titleText.props.children = [
+                            titleText.props.children,
+                            React.createElement(
+                              RN.View,
+                              { key: "QoLPlatformIconsDM", style: { flexDirection: "row", alignItems: "center", marginLeft: 4 } },
+                              React.createElement(PresenceUpdatedContainer, { userId: userId, size: 14 })
+                            ),
+                          ];
                         }
                       }
                     } catch (_) {}
@@ -2191,9 +2318,9 @@ const manifest = {
     }
   ],
   main: "index.js",
-  version: "1.4.2",
+  version: "1.4.3",
   hash: sha256
 };
 
 fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
-console.log("Built v1.4.2 successfully with hash:", sha256);
+console.log("Built v1.4.3 successfully with hash:", sha256);
