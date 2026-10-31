@@ -97,7 +97,82 @@
     }
   }
 
+  // The Custom Settings Component
+  function SettingsScreen() {
+    const React = (vendetta && vendetta.metro && vendetta.metro.common && vendetta.metro.common.React) || window.React;
+    const RN = (vendetta && vendetta.metro && vendetta.metro.common && vendetta.metro.common.ReactNative) || {};
+    const { ScrollView, View, Text, Switch, StyleSheet } = RN;
+    const storage = getStorage();
+    const [, setTick] = React && React.useState ? React.useState(0) : [0, () => {}];
+
+    function toggle(key) {
+      storage[key] = !storage[key];
+      setTick((t) => t + 1);
+      try {
+        if (vendetta && vendetta.ui && vendetta.ui.toasts && vendetta.ui.toasts.showToast) {
+          vendetta.ui.toasts.showToast(
+            `${key} is now ${storage[key] ? "Enabled" : "Disabled"}`
+          );
+        }
+      } catch (_) {}
+    }
+
+    if (!React || !View) return null;
+
+    const styles = StyleSheet.create({
+      container: { flex: 1, padding: 16, backgroundColor: "#1e1f22" },
+      title: { fontSize: 20, fontWeight: "bold", color: "#ffffff", marginBottom: 16 },
+      row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#2b2d31" },
+      label: { fontSize: 16, color: "#ffffff" },
+      desc: { fontSize: 12, color: "#949ba4", marginTop: 2 },
+    });
+
+    const options = [
+      { key: "noCompression", label: "Zero Compression (Original Quality)", desc: "Upload photos & videos with exact original file size, resolution, and bitrate" },
+      { key: "mediaViewing", label: "Hold-Down Avatar/Banner to Download", desc: "Hold down user avatar or banner to download 4096px source directly to gallery" },
+      { key: "silentTyping", label: "Silent / Incognito Typing", desc: "Never broadcast 'typing...' in any DM or server" },
+      { key: "messageLogger", label: "Message Logger", desc: "Keep deleted messages (*deleted*) and show previous text on edits (*old text*)" },
+      { key: "antiCall", label: "Anti-Accidental Call", desc: "Confirm before starting voice or video calls" },
+      { key: "openExternalBrowser", label: "Open in External Browser", desc: "Bypass in-app webview for all clicked links" },
+      { key: "cleanUrls", label: "Clean URLs (Tracker Stripper)", desc: "Remove utm, si, igshid trackers when sending links" },
+      { key: "backgroundAudio", label: "Background Audio", desc: "Keep voice messages and MP3s playing in background" },
+      { key: "exactTimestamps", label: "Exact Timestamps", desc: "Show hours, minutes, and seconds on messages" },
+    ];
+
+    return React.createElement(
+      ScrollView,
+      { style: styles.container },
+      React.createElement(Text, { style: styles.title }, "QoL All-in-One Settings"),
+      options.map((opt) =>
+        React.createElement(
+          View,
+          { key: opt.key, style: styles.row },
+          React.createElement(
+            View,
+            { style: { flex: 1, paddingRight: 8 } },
+            React.createElement(Text, { style: styles.label }, opt.label),
+            React.createElement(Text, { style: styles.desc }, opt.desc)
+          ),
+          React.createElement(Switch, {
+            value: !!storage[opt.key],
+            onValueChange: () => toggle(opt.key),
+            thumbColor: storage[opt.key] ? "#5865f2" : "#80848e",
+            trackColor: { false: "#4e5058", true: "#7983f5" },
+          })
+        )
+      )
+    );
+  }
+
   const plugin = {
+    // Both Revenge native lifecycle (start/stop) and Vendetta compatibility (onLoad/onUnload)
+    start: () => plugin.onLoad(),
+    stop: () => plugin.onUnload(),
+
+    // Both Revenge native naming (SettingsComponent) and Vendetta naming (settings)
+    settings: SettingsScreen,
+    SettingsComponent: SettingsScreen,
+
     onLoad: () => {
       try {
         if (!vendetta) {
@@ -131,11 +206,9 @@
         function downloadMedia(url, label = "Media") {
           if (!url) return;
           try {
-            // Haptic vibration feedback
             if (RN.Vibration && typeof RN.Vibration.vibrate === "function") {
               RN.Vibration.vibrate(50);
             }
-            // Copy URL to clipboard as a reliable backup
             if (RN.Clipboard && typeof RN.Clipboard.setString === "function") {
               RN.Clipboard.setString(url);
             }
@@ -154,7 +227,6 @@
             console.warn("[QoL-AIO] MediaManager error:", e);
           }
 
-          // Fallback to external browser download if native MediaManager is unavailable
           const Linking = findByProps("openURL", "canOpenURL") || RN.Linking;
           if (Linking && Linking.openURL) {
             Linking.openURL(url);
@@ -163,7 +235,6 @@
 
         // =========================================================================
         // 1. HOLD DOWN (LONG-PRESS) USER PFP & BANNER TO DOWNLOAD
-        // In-place attachment: Leaves native layout & positioning 100% untouched!
         // =========================================================================
         try {
           const HeaderAvatar = findByName("HeaderAvatar", false);
@@ -171,7 +242,6 @@
           const GuildIcon = findByName("GuildIcon");
           const { Pressable } = findByProps("Button", "Text", "View") || {};
 
-          // HOLD DOWN USER PFP TO DOWNLOAD
           if (HeaderAvatar && after) {
             unpatches.push(
               after("default", HeaderAvatar, ([args], res) => {
@@ -181,7 +251,6 @@
                 const avatarUrl = getUserAvatarUrl(user, guildId);
 
                 if (avatarUrl) {
-                  // Recursively inject onLongPress into the avatar component tree without touching styles or wrapping
                   attachLongPress(res, () => {
                     downloadMedia(avatarUrl, "Avatar");
                   });
@@ -191,7 +260,6 @@
             );
           }
 
-          // HOLD DOWN USER BANNER TO DOWNLOAD
           if (ProfileBanner && after) {
             unpatches.push(
               after("default", ProfileBanner, ([args], res) => {
@@ -208,7 +276,6 @@
             );
           }
 
-          // SERVER ICON DOWNLOAD: Tap server icon in large view to download
           if (GuildIcon && GuildIcon.prototype && after && Pressable && React) {
             unpatches.push(
               after("render", GuildIcon.prototype, function (_, res) {
@@ -228,7 +295,7 @@
               })
             );
           }
-          console.log("[QoL-AIO] Hold-down PFP & Banner downloader hooks active.");
+          console.log("[QoL-AIO] Avatar & Banner downloader active.");
         } catch (e) {
           console.warn("[QoL-AIO] Error patching Avatar/Banner downloader:", e);
         }
@@ -509,73 +576,20 @@
       unpatches = [];
       console.log("[QoL-AIO] Unloaded and all patches cleaned up.");
     },
-
-    settings: function Settings() {
-      const React = (vendetta.metro && vendetta.metro.common && vendetta.metro.common.React) || window.React;
-      const RN = (vendetta.metro && vendetta.metro.common && vendetta.metro.common.ReactNative) || {};
-      const { ScrollView, View, Text, Switch, StyleSheet } = RN;
-      const storage = getStorage();
-      const [, setTick] = React ? React.useState(0) : [0, () => {}];
-
-      function toggle(key) {
-        storage[key] = !storage[key];
-        setTick((t) => t + 1);
-      }
-
-      if (!React || !View) return null;
-
-      const styles = StyleSheet.create({
-        container: { flex: 1, padding: 16, backgroundColor: "#1e1f22" },
-        title: { fontSize: 20, fontWeight: "bold", color: "#ffffff", marginBottom: 16 },
-        row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#2b2d31" },
-        label: { fontSize: 16, color: "#ffffff" },
-        desc: { fontSize: 12, color: "#949ba4", marginTop: 2 },
-      });
-
-      const options = [
-        { key: "noCompression", label: "Zero Compression (Original Quality)", desc: "Upload photos & videos with exact original file size, resolution, and bitrate" },
-        { key: "mediaViewing", label: "Hold-Down Avatar/Banner to Download", desc: "Hold down user avatar or banner to download 4096px source directly to gallery" },
-        { key: "silentTyping", label: "Silent / Incognito Typing", desc: "Never broadcast 'typing...' in any DM or server" },
-        { key: "messageLogger", label: "Message Logger", desc: "Keep deleted messages (*deleted*) and show previous text on edits (*old text*)" },
-        { key: "antiCall", label: "Anti-Accidental Call", desc: "Confirm before starting voice or video calls" },
-        { key: "openExternalBrowser", label: "Open in External Browser", desc: "Bypass in-app webview for all clicked links" },
-        { key: "cleanUrls", label: "Clean URLs (Tracker Stripper)", desc: "Remove utm, si, igshid trackers when sending links" },
-        { key: "backgroundAudio", label: "Background Audio", desc: "Keep voice messages and MP3s playing in background" },
-        { key: "exactTimestamps", label: "Exact Timestamps", desc: "Show hours, minutes, and seconds on messages" },
-      ];
-
-      return React.createElement(
-        ScrollView,
-        { style: styles.container },
-        React.createElement(Text, { style: styles.title }, "QoL All-in-One Settings"),
-        options.map((opt) =>
-          React.createElement(
-            View,
-            { key: opt.key, style: styles.row },
-            React.createElement(
-              View,
-              { style: { flex: 1, paddingRight: 8 } },
-              React.createElement(Text, { style: styles.label }, opt.label),
-              React.createElement(Text, { style: styles.desc }, opt.desc)
-            ),
-            React.createElement(Switch, {
-              value: !!storage[opt.key],
-              onValueChange: () => toggle(opt.key),
-              thumbColor: storage[opt.key] ? "#5865f2" : "#80848e",
-              trackColor: { false: "#4e5058", true: "#7983f5" },
-            })
-          )
-        )
-      );
-    },
   };
+
+  plugin.default = plugin;
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = plugin;
     module.exports.default = plugin;
+    module.exports.settings = SettingsScreen;
+    module.exports.SettingsComponent = SettingsScreen;
   }
   if (typeof exports !== "undefined") {
     exports.default = plugin;
+    exports.settings = SettingsScreen;
+    exports.SettingsComponent = SettingsScreen;
   }
 
   return plugin;
