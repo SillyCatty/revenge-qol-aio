@@ -39,6 +39,64 @@
     });
   }
 
+  // Extract highest-resolution avatar URL (4096px, GIF if animated, PNG if static)
+  function getUserAvatarUrl(user, guildId) {
+    if (!user) return null;
+    try {
+      if (guildId && user.guildMemberAvatars && user.guildMemberAvatars[guildId]) {
+        const hash = user.guildMemberAvatars[guildId];
+        const ext = hash.startsWith("a_") ? "gif" : "png";
+        return `https://cdn.discordapp.com/guilds/${guildId}/users/${user.id}/avatars/${hash}.${ext}?size=4096`;
+      }
+      if (typeof user.getAvatarURL === "function") {
+        const u = user.getAvatarURL(guildId, 4096, true) || user.getAvatarURL(false, 4096, true);
+        if (u) return String(u).replace(/\.webp(\?size=\d+)?$/, ".png$1");
+      }
+      if (user.avatar) {
+        const ext = user.avatar.startsWith("a_") ? "gif" : "png";
+        return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${ext}?size=4096`;
+      }
+      const idx = Number(BigInt(user.id || 0) >> 22n) % 6;
+      return `https://cdn.discordapp.com/embed/avatars/${idx}.png`;
+    } catch (_) {
+      return "https://cdn.discordapp.com/embed/avatars/0.png";
+    }
+  }
+
+  // Extract highest-resolution banner URL
+  function getUserBannerUrl(user, bannerSource) {
+    if (bannerSource && bannerSource.uri && typeof bannerSource.uri === "string") {
+      return bannerSource.uri.replace(/(?:\?size=\d{3,4})?$/, "?size=4096").replace(".webp", ".png");
+    }
+    if (user && user.banner) {
+      const ext = user.banner.startsWith("a_") ? "gif" : "png";
+      return `https://cdn.discordapp.com/banners/${user.id}/${user.banner}.${ext}?size=4096`;
+    }
+    return null;
+  }
+
+  // Non-destructive in-place attachment of onLongPress to existing component trees
+  function attachLongPress(node, handler) {
+    if (!node || typeof node !== "object") return;
+    if (node.props) {
+      const origOnLongPress = node.props.onLongPress;
+      node.props.onLongPress = function (e) {
+        try { handler(e); } catch (_) {}
+        if (typeof origOnLongPress === "function") {
+          return origOnLongPress.apply(this, arguments);
+        }
+      };
+
+      if (node.props.children) {
+        if (Array.isArray(node.props.children)) {
+          node.props.children.forEach((c) => attachLongPress(c, handler));
+        } else {
+          attachLongPress(node.props.children, handler);
+        }
+      }
+    }
+  }
+
   const plugin = {
     onLoad: () => {
       try {
@@ -68,11 +126,20 @@
           }
         } catch (_) {}
 
-        // Helper: Download Image to Gallery
+        // Helper: Download Media directly to Android Gallery
         const MediaManager = findByProps("downloadMediaAsset");
         function downloadMedia(url, label = "Media") {
           if (!url) return;
           try {
+            // Haptic vibration feedback
+            if (RN.Vibration && typeof RN.Vibration.vibrate === "function") {
+              RN.Vibration.vibrate(50);
+            }
+            // Copy URL to clipboard as a reliable backup
+            if (RN.Clipboard && typeof RN.Clipboard.setString === "function") {
+              RN.Clipboard.setString(url);
+            }
+
             if (MediaManager && typeof MediaManager.downloadMediaAsset === "function") {
               MediaManager.downloadMediaAsset(url, 1);
               if (ui && ui.toasts && ui.toasts.showToast) {
@@ -83,9 +150,11 @@
               }
               return;
             }
-          } catch (_) {}
+          } catch (e) {
+            console.warn("[QoL-AIO] MediaManager error:", e);
+          }
 
-          // Fallback to external browser download
+          // Fallback to external browser download if native MediaManager is unavailable
           const Linking = findByProps("openURL", "canOpenURL") || RN.Linking;
           if (Linking && Linking.openURL) {
             Linking.openURL(url);
@@ -93,7 +162,79 @@
         }
 
         // =========================================================================
-        // 1. NO COMPRESSION (PHOTOS & VIDEOS UPLOAD AT ORIGINAL QUALITY & BITRATE)
+        // 1. HOLD DOWN (LONG-PRESS) USER PFP & BANNER TO DOWNLOAD
+        // In-place attachment: Leaves native layout & positioning 100% untouched!
+        // =========================================================================
+        try {
+          const HeaderAvatar = findByName("HeaderAvatar", false);
+          const ProfileBanner = findByName("ProfileBanner", false);
+          const GuildIcon = findByName("GuildIcon");
+          const { Pressable } = findByProps("Button", "Text", "View") || {};
+
+          // HOLD DOWN USER PFP TO DOWNLOAD
+          if (HeaderAvatar && after) {
+            unpatches.push(
+              after("default", HeaderAvatar, ([args], res) => {
+                if (!storage.mediaViewing || !res || !args) return res;
+                const user = args.user;
+                const guildId = args.guildId;
+                const avatarUrl = getUserAvatarUrl(user, guildId);
+
+                if (avatarUrl) {
+                  // Recursively inject onLongPress into the avatar component tree without touching styles or wrapping
+                  attachLongPress(res, () => {
+                    downloadMedia(avatarUrl, "Avatar");
+                  });
+                }
+                return res;
+              })
+            );
+          }
+
+          // HOLD DOWN USER BANNER TO DOWNLOAD
+          if (ProfileBanner && after) {
+            unpatches.push(
+              after("default", ProfileBanner, ([args], res) => {
+                if (!storage.mediaViewing || !res || !args) return res;
+                const bannerUrl = getUserBannerUrl(args.user, args.bannerSource);
+
+                if (bannerUrl) {
+                  attachLongPress(res, () => {
+                    downloadMedia(bannerUrl, "Banner");
+                  });
+                }
+                return res;
+              })
+            );
+          }
+
+          // SERVER ICON DOWNLOAD: Tap server icon in large view to download
+          if (GuildIcon && GuildIcon.prototype && after && Pressable && React) {
+            unpatches.push(
+              after("render", GuildIcon.prototype, function (_, res) {
+                if (!storage.mediaViewing || this.props?.size !== "XLARGE" || !this.props?.guild) return res;
+                const guild = this.props.guild;
+                const iconUrl = typeof guild.getIconURL === "function" ? guild.getIconURL(4096) : null;
+                if (!iconUrl) return res;
+
+                return React.createElement(
+                  Pressable,
+                  {
+                    onPress: () => downloadMedia(iconUrl, "Server Icon"),
+                    onLongPress: () => downloadMedia(iconUrl, "Server Icon"),
+                  },
+                  res
+                );
+              })
+            );
+          }
+          console.log("[QoL-AIO] Hold-down PFP & Banner downloader hooks active.");
+        } catch (e) {
+          console.warn("[QoL-AIO] Error patching Avatar/Banner downloader:", e);
+        }
+
+        // =========================================================================
+        // 2. NO COMPRESSION (PHOTOS & VIDEOS UPLOAD AT ORIGINAL QUALITY & BITRATE)
         // =========================================================================
         try {
           const CloudUploadModule = findByProps("CloudUpload");
@@ -131,7 +272,7 @@
         }
 
         // =========================================================================
-        // 2. SILENT / INCOGNITO TYPING (WITH CONFIG TOGGLE)
+        // 3. SILENT / INCOGNITO TYPING (WITH CONFIG TOGGLE)
         // =========================================================================
         try {
           const Typing = findByProps("startTyping");
@@ -148,14 +289,14 @@
                 return orig.apply(Typing, args);
               })
             );
-            console.log("[QoL-AIO] Silent Typing hook initialized.");
+            console.log("[QoL-AIO] Silent Typing hook active.");
           }
         } catch (e) {
           console.warn("[QoL-AIO] Error patching Typing:", e);
         }
 
         // =========================================================================
-        // 3. ANTI-ACCIDENTAL CALLS (CONFIRMATION DIALOG)
+        // 4. ANTI-ACCIDENTAL CALLS (CONFIRMATION DIALOG)
         // =========================================================================
         try {
           const CallActions = findByProps("call", "ring") || findByProps("startCall");
@@ -179,14 +320,14 @@
                 }
               })
             );
-            console.log("[QoL-AIO] Anti-Accidental Call hook initialized.");
+            console.log("[QoL-AIO] Anti-Accidental Call hook active.");
           }
         } catch (e) {
           console.warn("[QoL-AIO] Error patching CallActions:", e);
         }
 
         // =========================================================================
-        // 4. OPEN IN EXTERNAL BROWSER DIRECTLY
+        // 5. OPEN IN EXTERNAL BROWSER DIRECTLY
         // =========================================================================
         try {
           const Linking = findByProps("openURL", "canOpenURL") || RN.Linking;
@@ -210,14 +351,14 @@
                 })
               );
             }
-            console.log("[QoL-AIO] External Browser hook initialized.");
+            console.log("[QoL-AIO] External Browser hook active.");
           }
         } catch (e) {
           console.warn("[QoL-AIO] Error patching InAppBrowser:", e);
         }
 
         // =========================================================================
-        // 5. CLEAN URLS & MESSAGE SEND LATENCY ENHANCEMENT
+        // 6. CLEAN URLS & MESSAGE SEND LATENCY ENHANCEMENT
         // =========================================================================
         try {
           const MessageActions = findByProps("sendMessage", "receiveMessage");
@@ -230,14 +371,14 @@
                 }
               })
             );
-            console.log("[QoL-AIO] Clean URLs hook initialized.");
+            console.log("[QoL-AIO] Clean URLs hook active.");
           }
         } catch (e) {
           console.warn("[QoL-AIO] Error patching MessageActions:", e);
         }
 
         // =========================================================================
-        // 6. BACKGROUND AUDIO (VOICE NOTES & MP3 ATTACHMENTS)
+        // 7. BACKGROUND AUDIO (VOICE NOTES & MP3 ATTACHMENTS)
         // =========================================================================
         try {
           const AudioManager = (RN.NativeModules && (RN.NativeModules.AudioManager || RN.NativeModules.RTNAudioManager));
@@ -247,67 +388,10 @@
                 if (!storage.backgroundAudio) return orig.apply(AudioManager, args);
               })
             );
-            console.log("[QoL-AIO] Background Audio hook initialized.");
+            console.log("[QoL-AIO] Background Audio hook active.");
           }
         } catch (e) {
           console.warn("[QoL-AIO] Error patching AudioManager:", e);
-        }
-
-        // =========================================================================
-        // 7. DOWNLOAD BUTTON FOR USER PFP & SERVER IMAGE (NO LAYOUT OFFSET!)
-        // =========================================================================
-        try {
-          const ActionSheet = findByProps("openLazy", "hideActionSheet");
-          const GuildIcon = findByName("GuildIcon");
-          const { Pressable } = findByProps("Button", "Text", "View") || {};
-
-          // In user profile 3-dots sheet, inject Download Avatar & Banner buttons
-          if (ActionSheet && ActionSheet.openLazy && before) {
-            unpatches.push(
-              before("openLazy", ActionSheet, (args) => {
-                if (!storage.mediaViewing) return;
-                const [componentPromise, key, ctx] = args;
-                if (key === "UserProfileActions" || key === "UserSheet" || (ctx && ctx.user)) {
-                  const user = ctx?.user;
-                  if (user) {
-                    const avatarUrl = typeof user.getAvatarURL === "function" ? user.getAvatarURL(false, 4096, true) : null;
-                    const bannerUrl = user.banner ? `https://cdn.discordapp.com/banners/${user.id}/${user.banner}.png?size=4096` : null;
-
-                    // Expose global download triggers
-                    window.__qol_download_avatar = () => {
-                      if (avatarUrl) downloadMedia(String(avatarUrl).replace(".webp", ".png"), "Avatar");
-                    };
-                    window.__qol_download_banner = () => {
-                      if (bannerUrl) downloadMedia(String(bannerUrl).replace(".webp", ".png"), "Banner");
-                    };
-                  }
-                }
-              })
-            );
-          }
-
-          // Server Icon: Tap server icon in large view to download
-          if (GuildIcon && GuildIcon.prototype && after && Pressable && React) {
-            unpatches.push(
-              after("render", GuildIcon.prototype, function (_, res) {
-                if (!storage.mediaViewing || this.props?.size !== "XLARGE" || !this.props?.guild) return res;
-                const guild = this.props.guild;
-                const iconUrl = typeof guild.getIconURL === "function" ? guild.getIconURL(4096) : null;
-                if (!iconUrl) return res;
-
-                return React.createElement(
-                  Pressable,
-                  {
-                    onPress: () => downloadMedia(iconUrl, "Server Icon"),
-                  },
-                  res
-                );
-              })
-            );
-          }
-          console.log("[QoL-AIO] Profile & Server downloader hooks active.");
-        } catch (e) {
-          console.warn("[QoL-AIO] Error patching Profile Downloader:", e);
         }
 
         // =========================================================================
@@ -423,8 +507,6 @@
         } catch (_) {}
       }
       unpatches = [];
-      delete window.__qol_download_avatar;
-      delete window.__qol_download_banner;
       console.log("[QoL-AIO] Unloaded and all patches cleaned up.");
     },
 
@@ -452,9 +534,9 @@
 
       const options = [
         { key: "noCompression", label: "Zero Compression (Original Quality)", desc: "Upload photos & videos with exact original file size, resolution, and bitrate" },
+        { key: "mediaViewing", label: "Hold-Down Avatar/Banner to Download", desc: "Hold down user avatar or banner to download 4096px source directly to gallery" },
         { key: "silentTyping", label: "Silent / Incognito Typing", desc: "Never broadcast 'typing...' in any DM or server" },
         { key: "messageLogger", label: "Message Logger", desc: "Keep deleted messages (*deleted*) and show previous text on edits (*old text*)" },
-        { key: "mediaViewing", label: "Server & Avatar Download", desc: "Tap server icon in large view to download, downloads full 4096px resolution" },
         { key: "antiCall", label: "Anti-Accidental Call", desc: "Confirm before starting voice or video calls" },
         { key: "openExternalBrowser", label: "Open in External Browser", desc: "Bypass in-app webview for all clicked links" },
         { key: "cleanUrls", label: "Clean URLs (Tracker Stripper)", desc: "Remove utm, si, igshid trackers when sending links" },
