@@ -350,7 +350,9 @@
       // Check PresenceStore
       const PresenceStore =
         (metro?.findByStoreName && metro.findByStoreName("PresenceStore")) ||
-        (metro?.findByProps && metro.findByProps("getState", "getStatus"));
+        (metro?.findByProps && metro.findByProps("getStatus", "isMobileOnline")) ||
+        (metro?.findByProps && metro.findByProps("getState", "getStatus")) ||
+        (metro?.findByProps && metro.findByProps("getClientStatuses"));
 
       const state = PresenceStore?.getState ? PresenceStore.getState() : getCachedPresenceState();
 
@@ -360,6 +362,9 @@
       }
       if (!clientStatuses && state?.clientStatuses?.[userId]) {
         clientStatuses = state.clientStatuses[userId];
+      }
+      if (!clientStatuses && state?.presences?.[userId]?.clientStatus) {
+        clientStatuses = state.presences[userId].clientStatus;
       }
 
       const res = {};
@@ -371,14 +376,21 @@
         });
       }
 
-      const userStatus = PresenceStore?.getStatus ? PresenceStore.getStatus(userId) : state?.statuses?.[userId];
+      const userStatus =
+        (PresenceStore?.getStatus && PresenceStore.getStatus(userId)) ||
+        state?.statuses?.[userId] ||
+        state?.presences?.[userId]?.status ||
+        (clientStatuses && Object.keys(clientStatuses).length > 0 ? "online" : null);
+
       const isMobile =
         (typeof PresenceStore?.isMobileOnline === "function" && PresenceStore.isMobileOnline(userId)) ||
+        (typeof PresenceStore?.isMobile === "function" && PresenceStore.isMobile(userId)) ||
         (state?.mobileOnlineUsers && (state.mobileOnlineUsers[userId] || (typeof state.mobileOnlineUsers.has === "function" && state.mobileOnlineUsers.has(userId)))) ||
-        (state?.mobileStatuses && state.mobileStatuses[userId]);
+        (state?.mobileStatuses && state.mobileStatuses[userId]) ||
+        (clientStatuses && !!clientStatuses.mobile);
 
       if (isMobile && userStatus && userStatus !== "offline") {
-        res.mobile = userStatus;
+        res.mobile = res.mobile || userStatus;
       }
 
       // Fallback: if user is active (online, idle, dnd) but no specific platform was listed in clientStatuses
@@ -391,6 +403,81 @@
       }
 
       return Object.keys(res).length > 0 ? res : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Extract recipient userId from any DM channel row tree or arguments
+  function extractDMUserId(tree, args) {
+    try {
+      const metro = vendetta?.metro;
+      const ChannelStore =
+        (metro?.findByStoreName && metro.findByStoreName("ChannelStore")) ||
+        (metro?.findByProps && metro.findByProps("getChannel", "getDMFromUserId"));
+
+      // 1. Check args first
+      if (args) {
+        const a0 = args[0];
+        const ch = a0?.channel || a0;
+        if (ch) {
+          if (ch.guild_id || ch.guildId) return null;
+          const recipients = ch.recipients || ch.rawRecipients;
+          if (Array.isArray(recipients) && recipients.length === 1) {
+            return typeof recipients[0] === "string" ? recipients[0] : recipients[0]?.id;
+          }
+          if (typeof ch.getRecipientId === "function") {
+            const id = ch.getRecipientId();
+            if (id) return id;
+          }
+          if (ch.recipientId) return ch.recipientId;
+        }
+      }
+
+      if (!tree) return null;
+
+      // 2. Search tree for channel object
+      const chNode = findInReactTree(tree, (m) => m?.props?.channel?.id || m?.props?.channel?.recipients);
+      let channel = chNode?.props?.channel;
+
+      // 3. Search tree for channelId and lookup in ChannelStore
+      if (!channel) {
+        const chIdNode = findInReactTree(
+          tree,
+          (m) =>
+            (m?.props?.channelId && typeof m.props.channelId === "string") ||
+            (m?.props?.channel_id && typeof m.props.channel_id === "string")
+        );
+        const chId = chIdNode?.props?.channelId || chIdNode?.props?.channel_id;
+        if (chId && ChannelStore?.getChannel) {
+          channel = ChannelStore.getChannel(chId);
+        }
+      }
+
+      if (channel) {
+        if (channel.guild_id || channel.guildId) return null;
+        const recipients = channel.recipients || channel.rawRecipients;
+        if (Array.isArray(recipients) && recipients.length === 1) {
+          return typeof recipients[0] === "string" ? recipients[0] : recipients[0]?.id;
+        }
+        if (typeof channel.getRecipientId === "function") {
+          const id = channel.getRecipientId();
+          if (id) return id;
+        }
+        if (channel.recipientId) return channel.recipientId;
+      }
+
+      // 4. Direct user or userId props in tree
+      const userNode = findInReactTree(tree, (m) => m?.props?.user?.id && !m?.props?.guildId);
+      if (userNode?.props?.user?.id) return userNode.props.user.id;
+
+      const idNode = findInReactTree(tree, (m) => m?.props?.userId && typeof m.props.userId === "string");
+      if (idNode?.props?.userId) return idNode.props.userId;
+
+      const recipNode = findInReactTree(tree, (m) => m?.props?.recipient?.id);
+      if (recipNode?.props?.recipient?.id) return recipNode.props.recipient.id;
+
+      return null;
     } catch (_) {
       return null;
     }
@@ -1547,108 +1634,13 @@
             }
           );
 
-          // B. Hook UserRow (Member list in channels / tabs v2)
-          hookModule(
-            "modules/main_tabs_v2/native/shared_components/user_list/UserRow.tsx",
-            () => findByProps("UserRowModes"),
-            null,
-            (args, res) => {
-              if (!storage.platformIndicators || !res) return res;
-              // Check if indicators were already added to this row
-              if (
-                findInReactTree(
-                  res,
-                  (c) =>
-                    c?.key === "QoLPlatformIconsWrap" ||
-                    c?.key === "QoLPI" ||
-                    c?.key === "QoLPlatformIconsUserRow" ||
-                    c?.key === "QoLPI_TV2"
-                )
-              ) {
-                return res;
-              }
-
-              const userId = args?.[0]?.user?.id || findInReactTree(res, (m) => m?.props?.userId)?.props?.userId;
-              if (!userId) return res;
-
-              const nameContainer = findInReactTree(
-                res,
-                (m) => m?.props?.children && Array.isArray(m.props.children) && m.props.children.some((h) => h?.props?.variant === "text-md/semibold")
-              );
-              if (nameContainer && Array.isArray(nameContainer.props?.children)) {
-                const idx = nameContainer.props.children.findIndex((h) => h?.props?.variant === "text-md/semibold");
-                if (idx !== -1) {
-                  nameContainer.props.children.splice(
-                    idx + 1,
-                    0,
-                    React.createElement(PresenceUpdatedContainer, {
-                      key: "QoLPlatformIconsUserRow",
-                      userId: userId,
-                      size: 14,
-                    })
-                  );
-                  return res;
-                }
-              }
-
-              if (res.props && res.props.label) {
-                const origLabel = res.props.label;
-                res.props.label = React.createElement(
-                  RN.View,
-                  {
-                    key: "QoLPlatformIconsUserRow",
-                    style: { flexDirection: "row", alignItems: "center" },
-                  },
-                  origLabel,
-                  React.createElement(PresenceUpdatedContainer, { userId: userId, size: 14 })
-                );
-              }
-              return res;
-            }
-          );
-
-          // C. Hook findByTypeNameAll("UserRow") as additional fallback for Vendetta/Bunny
-          if (metro?.findByTypeNameAll) {
-            try {
-              const rows = metro.findByTypeNameAll("UserRow");
-              rows.forEach((UserRow) => {
-                unpatches.push(
-                  after("type", UserRow, ([{ user }], res) => {
-                    if (!storage.platformIndicators || !user || !res || !res.props) return res;
-                    if (
-                      findInReactTree(
-                        res,
-                        (c) =>
-                          c?.key === "QoLPlatformIconsWrap" ||
-                          c?.key === "QoLPI" ||
-                          c?.key === "QoLPlatformIconsUserRow" ||
-                          c?.key === "QoLPI_TV2"
-                      )
-                    ) {
-                      return res;
-                    }
-                    res.props.label = React.createElement(
-                      RN.View,
-                      {
-                        key: "QoLPI_TV2",
-                        style: { flexDirection: "row", alignItems: "center" },
-                      },
-                      res.props.label,
-                      React.createElement(PresenceUpdatedContainer, { userId: user.id, size: 14 })
-                    );
-                  })
-                );
-              });
-            } catch (_) {}
-          }
-
-          // D. Hook GuildMemberRow (server member list)
+          // B. Hook GuildMemberRow (server member list fallback)
           const Rows = findByProps("GuildMemberRow");
           if (Rows?.GuildMemberRow && after) {
             unpatches.push(
               after("type", Rows.GuildMemberRow, ([{ user }], res) => {
                 if (!storage.platformIndicators || !user || !res) return res;
-                if (findInReactTree(res, (c) => c?.key === "QoLPlatformIconsGMR")) return res;
+                if (findInReactTree(res, (c) => c?.key === "QoLPlatformIconsGMR" || c?.key === "QoLPlatformIconsWrap" || c?.key === "QoLPI")) return res;
                 const row = findInReactTree(res, (c) => c?.props?.style?.flexDirection === "row");
                 if (row && row.props && Array.isArray(row.props.children)) {
                   row.props.children.splice(
@@ -1665,7 +1657,7 @@
             );
           }
 
-          // E. Hook DisplayName & DefaultName (profiles)
+          // C. Hook DisplayName & DefaultName (profiles)
           const DisplayName = findByProps("DisplayName");
           if (DisplayName && after) {
             const key = DisplayName.DisplayName ? "DisplayName" : "default";
@@ -1673,7 +1665,7 @@
               after(key, DisplayName, ([props], res) => {
                 if (!storage.platformIndicators || !props || !props.user || !res) return res;
                 const userId = props.user.id;
-                if (findInReactTree(res, (m) => m?.key === "QoLPlatformIconsDN")) return res;
+                if (findInReactTree(res, (m) => m?.key === "QoLPlatformIconsDN" || m?.key === "QoLPlatformIconsWrap" || m?.key === "QoLPI")) return res;
                 const row = findInReactTree(res, (m) => m?.props?.style?.flexDirection === "row");
                 if (row && Array.isArray(row.props?.children)) {
                   row.props.children.push(
@@ -1689,7 +1681,7 @@
             );
           }
 
-          // F. Hook ChannelHeader (DM top bar)
+          // D. Hook ChannelHeader (DM top bar)
           const ChannelHeader = findByName ? findByName("ChannelHeader", false) : null;
           if (ChannelHeader && after) {
             unpatches.push(
@@ -1701,7 +1693,7 @@
                     after("type", res.type, (args, headerRes) => {
                       const userId = findInReactTree(headerRes, (m) => m?.props?.user?.id)?.props?.user?.id;
                       if (!userId) return headerRes;
-                      if (findInReactTree(headerRes, (m) => m?.key === "QoLPlatformIconsHeader")) return headerRes;
+                      if (findInReactTree(headerRes, (m) => m?.key === "QoLPlatformIconsHeader" || m?.key === "QoLPlatformIconsWrap" || m?.key === "QoLPI")) return headerRes;
 
                       const titleContainer = findInReactTree(
                         headerRes,
@@ -1743,28 +1735,15 @@
             if (!storage.platformIndicators || !res) return res;
 
             try {
-              const arg0 = args?.[0];
-              const channel = arg0?.channel || arg0;
+              const isGuild = findInReactTree(
+                res,
+                (m) =>
+                  (m?.props?.guildId && typeof m.props.guildId === "string" && m.props.guildId !== "") ||
+                  (m?.props?.channel?.guild_id && typeof m.props.channel.guild_id === "string" && m.props.channel.guild_id !== "")
+              );
+              if (isGuild) return res;
 
-              // Only show for 1-on-1 direct messages
-              const isDM =
-                channel?.type === 1 ||
-                (typeof channel?.isDM === "function" && channel.isDM()) ||
-                (Array.isArray(channel?.recipients) && channel.recipients.length === 1);
-
-              if (channel && channel.type !== undefined && !isDM) return res;
-
-              let userId =
-                (Array.isArray(channel?.recipients) && channel.recipients[0]) ||
-                (typeof channel?.getRecipientId === "function" && channel.getRecipientId()) ||
-                (Array.isArray(channel?.rawRecipients) && channel.rawRecipients[0]?.id) ||
-                channel?.recipientId;
-
-              if (!userId) {
-                const userNode = findInReactTree(res, (m) => m?.props?.user?.id || m?.props?.userId);
-                userId = userNode?.props?.user?.id || userNode?.props?.userId;
-              }
-
+              const userId = extractDMUserId(res, args);
               if (!userId) return res;
               if (findInReactTree(res, (m) => m?.key === "QoLPlatformIconsDM")) return res;
 
@@ -1905,30 +1884,45 @@
                     if (findInReactTree(props, (m) => m?.key === "QoLPlatformIconsDM" || m?.key === "DMTabsV2DMList-v2")) return;
 
                     try {
-                      // Verify this is a 1-on-1 DM channel row
-                      const userNode = findInReactTree(props, (m) => m?.props?.user?.id && !m?.props?.guildId);
-                      const userId = userNode?.props?.user?.id;
-                      if (!userId) return;
-
-                      const isGuild = findInReactTree(props, (m) => m?.props?.guildId || m?.props?.channel?.guild_id);
+                      const isGuild = findInReactTree(
+                        props,
+                        (m) =>
+                          (m?.props?.guildId && typeof m.props.guildId === "string" && m.props.guildId !== "") ||
+                          (m?.props?.channel?.guild_id && typeof m.props.channel.guild_id === "string" && m.props.channel.guild_id !== "")
+                      );
                       if (isGuild) return;
+
+                      const userId = extractDMUserId(props, args);
+                      if (!userId) return;
 
                       // Strategy A: MSMA rowChildren path
                       const root = props?.children?.props?.children;
                       const rowChildren = root?.props?.children;
                       if (Array.isArray(rowChildren) && rowChildren.length >= 2) {
                         const nameArea = rowChildren[2]?.props?.children?.[0];
-                        if (nameArea && nameArea.props && Array.isArray(nameArea.props.children)) {
-                          if (!findInReactTree(nameArea.props.children, (c) => c?.key === "QoLPlatformIconsDM")) {
-                            nameArea.props.children.splice(
-                              1,
-                              0,
+                        if (nameArea && nameArea.props) {
+                          if (Array.isArray(nameArea.props.children)) {
+                            if (!findInReactTree(nameArea.props.children, (c) => c?.key === "QoLPlatformIconsDM")) {
+                              nameArea.props.children.splice(
+                                1,
+                                0,
+                                React.createElement(PresenceUpdatedContainer, {
+                                  key: "QoLPlatformIconsDM",
+                                  userId: userId,
+                                  size: 14,
+                                })
+                              );
+                              return;
+                            }
+                          } else if (typeof nameArea.props.children === "string") {
+                            nameArea.props.children = [
+                              nameArea.props.children,
                               React.createElement(PresenceUpdatedContainer, {
                                 key: "QoLPlatformIconsDM",
                                 userId: userId,
                                 size: 14,
-                              })
-                            );
+                              }),
+                            ];
                             return;
                           }
                         }
@@ -1969,6 +1963,16 @@
                             size: 14,
                           })
                         );
+                        return;
+                      } else if (nameContainer && nameContainer.props && nameContainer.props.children) {
+                        nameContainer.props.children = [
+                          nameContainer.props.children,
+                          React.createElement(PresenceUpdatedContainer, {
+                            key: "QoLPlatformIconsDM",
+                            userId: userId,
+                            size: 14,
+                          }),
+                        ];
                         return;
                       }
 
